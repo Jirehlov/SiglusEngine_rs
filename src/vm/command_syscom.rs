@@ -2,7 +2,7 @@ use super::*;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 impl Vm {
-    fn arg_int(args: &[Prop], idx: usize) -> i32 {
+    pub(super) fn arg_int(args: &[Prop], idx: usize) -> i32 {
         match args.get(idx).map(|p| &p.value) {
             Some(PropValue::Int(v)) => *v,
             _ => 0,
@@ -42,7 +42,7 @@ impl Vm {
             millisecond: ms,
         }
     }
-    fn make_local_slot(&self) -> LocalSaveSlot {
+    pub(super) fn make_local_slot(&self) -> LocalSaveSlot {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
@@ -95,15 +95,11 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_set_se_volume(x) => {
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_set_wipe_anime_onoff(x) => {
@@ -136,9 +132,7 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
                 Ok(Some(true))
             }
             x if x == crate::elm::syscom::ELM_SYSCOM_INIT_SYSCOM_FLAG => {
@@ -161,6 +155,11 @@ impl Vm {
                 self.save_exist_flag = 1;
                 self.load_enable_flag = 1;
                 self.load_exist_flag = 1;
+                self.end_game_enable_flag = 1;
+                self.end_game_exist_flag = 1;
+                self.game_end_flag = 0;
+                self.game_end_no_warning_flag = 0;
+                self.game_end_save_done_flag = 0;
                 if ret_form == crate::elm::form::INT {
                     self.stack.push_int(0);
                 }
@@ -174,14 +173,14 @@ impl Vm {
                             && self.msg_back_has_message != 0
                             && self.msg_back_disable_flag == 0
                         {
-                            // C++ reference: eng_syscom.cpp::tnm_syscom_open_msg_back()
-                            // Opening msg_back forcibly disables read-skip mode.
                             self.read_skip_onoff_flag = 0;
                             1
                         } else {
                             0
                         };
-                        host.on_msg_back_state(self.msg_back_open_flag != 0 && self.msg_back_disp_off_flag == 0);
+                        host.on_msg_back_state(
+                            self.msg_back_open_flag != 0 && self.msg_back_disp_off_flag == 0,
+                        );
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_CLOSE_MSG_BACK => {
                         self.msg_back_open_flag = 0;
@@ -189,9 +188,7 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_set_enable_flag(x) => {
@@ -253,11 +250,11 @@ impl Vm {
                     y if y == crate::elm::syscom::ELM_SYSCOM_SET_LOAD_EXIST_FLAG => {
                         self.load_exist_flag = on
                     }
+                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_ENABLE_FLAG => self.end_game_enable_flag = on,
+                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_EXIST_FLAG => self.end_game_exist_flag = on,
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_save_or_load(x) => {
@@ -265,7 +262,8 @@ impl Vm {
                 let ok = match x {
                     y if y == crate::elm::syscom::ELM_SYSCOM_SAVE => {
                         if let Some(slot_no) = slot_no {
-                            self.local_save_slots.insert(slot_no, self.make_local_slot());
+                            self.local_save_slots
+                                .insert(slot_no, self.make_local_slot());
                             true
                         } else {
                             false
@@ -273,7 +271,8 @@ impl Vm {
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_QUICK_SAVE => {
                         if let Some(slot_no) = slot_no {
-                            self.quick_save_slots.insert(slot_no, self.make_local_slot());
+                            self.quick_save_slots
+                                .insert(slot_no, self.make_local_slot());
                             true
                         } else {
                             false
@@ -281,15 +280,16 @@ impl Vm {
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_INNER_SAVE => {
                         if let Some(slot_no) = slot_no {
-                            self.inner_save_slots.insert(slot_no, self.make_local_slot());
+                            self.inner_save_slots
+                                .insert(slot_no, self.make_local_slot());
                             true
                         } else {
                             false
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_LOAD => {
-                        if let Some(slot) = slot_no
-                            .and_then(|slot_no| self.local_save_slots.get(&slot_no).cloned())
+                        if let Some(slot) =
+                            slot_no.and_then(|slot_no| self.local_save_slots.get(&slot_no).cloned())
                         {
                             self.apply_local_state(&slot.state);
                             true
@@ -298,8 +298,8 @@ impl Vm {
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_QUICK_LOAD => {
-                        if let Some(slot) = slot_no
-                            .and_then(|slot_no| self.quick_save_slots.get(&slot_no).cloned())
+                        if let Some(slot) =
+                            slot_no.and_then(|slot_no| self.quick_save_slots.get(&slot_no).cloned())
                         {
                             self.apply_local_state(&slot.state);
                             true
@@ -308,8 +308,8 @@ impl Vm {
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_INNER_LOAD => {
-                        if let Some(slot) = slot_no
-                            .and_then(|slot_no| self.inner_save_slots.get(&slot_no).cloned())
+                        if let Some(slot) =
+                            slot_no.and_then(|slot_no| self.inner_save_slots.get(&slot_no).cloned())
                         {
                             self.apply_local_state(&slot.state);
                             true
@@ -317,11 +317,9 @@ impl Vm {
                             false
                         }
                     }
-                    y if y == crate::elm::syscom::ELM_SYSCOM_CLEAR_INNER_SAVE => {
-                        slot_no
-                            .map(|slot_no| self.inner_save_slots.remove(&slot_no).is_some())
-                            .unwrap_or(false)
-                    }
+                    y if y == crate::elm::syscom::ELM_SYSCOM_CLEAR_INNER_SAVE => slot_no
+                        .map(|slot_no| self.inner_save_slots.remove(&slot_no).is_some())
+                        .unwrap_or(false),
                     y if y == crate::elm::syscom::ELM_SYSCOM_COPY_INNER_SAVE => {
                         let dst = Self::slot_arg(args, 1);
                         if let Some((dst, v)) = dst.zip(
@@ -360,8 +358,8 @@ impl Vm {
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_CHANGE_SAVE => {
                         let dst = Self::slot_arg(args, 1);
-                        if let Some((dst, v)) =
-                            dst.zip(slot_no.and_then(|slot_no| self.local_save_slots.remove(&slot_no)))
+                        if let Some((dst, v)) = dst
+                            .zip(slot_no.and_then(|slot_no| self.local_save_slots.remove(&slot_no)))
                         {
                             self.local_save_slots.insert(dst, v);
                             true
@@ -371,8 +369,8 @@ impl Vm {
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_CHANGE_QUICK_SAVE => {
                         let dst = Self::slot_arg(args, 1);
-                        if let Some((dst, v)) =
-                            dst.zip(slot_no.and_then(|slot_no| self.quick_save_slots.remove(&slot_no)))
+                        if let Some((dst, v)) = dst
+                            .zip(slot_no.and_then(|slot_no| self.quick_save_slots.remove(&slot_no)))
                         {
                             self.quick_save_slots.insert(dst, v);
                             true
@@ -438,27 +436,40 @@ impl Vm {
                         self.load_enable_flag
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_LOAD_EXIST_FLAG {
                         self.load_exist_flag
+                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_ENABLE_FLAG { self.end_game_enable_flag
+                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_EXIST_FLAG { self.end_game_exist_flag
                     } else if crate::elm::syscom::is_feature_check_query(x) {
                         if x == crate::elm::syscom::ELM_SYSCOM_CHECK_READ_SKIP_ENABLE {
-                            (self.read_skip_enable_flag != 0 && self.read_skip_exist_flag != 0) as i32
+                            (self.read_skip_enable_flag != 0 && self.read_skip_exist_flag != 0)
+                                as i32
                         } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_AUTO_MODE_ENABLE {
-                            (self.auto_mode_enable_flag != 0 && self.auto_mode_exist_flag != 0) as i32
+                            (self.auto_mode_enable_flag != 0 && self.auto_mode_exist_flag != 0)
+                                as i32
                         } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_MSG_BACK_ENABLE {
                             (self.msg_back_enable_flag != 0
                                 && self.msg_back_exist_flag != 0
                                 && self.msg_back_has_message != 0
-                                && self.msg_back_disable_flag == 0) as i32
+                                && self.msg_back_disable_flag == 0)
+                                as i32
                         } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_RETURN_TO_SEL_ENABLE {
                             (self.return_to_sel_enable_flag != 0
-                                && self.return_to_sel_exist_flag != 0) as i32
+                                && self.return_to_sel_exist_flag != 0)
+                                as i32
                         } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_RETURN_TO_MENU_ENABLE {
                             (self.return_to_menu_enable_flag != 0
-                                && self.return_to_menu_exist_flag != 0) as i32
+                                && self.return_to_menu_exist_flag != 0)
+                                as i32
                         } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_SAVE_ENABLE {
                             (self.save_enable_flag != 0 && self.save_exist_flag != 0) as i32
+                        } else if x == crate::elm::syscom::ELM_SYSCOM_CHECK_END_GAME_ENABLE {
+                            (self.end_game_enable_flag != 0 && self.end_game_exist_flag != 0) as i32
                         } else {
                             (self.load_enable_flag != 0 && self.load_exist_flag != 0) as i32
                         }
+                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_SAVE_EXIST {
+                        slot_no
+                            .map(|slot_no| host.on_syscom_end_save_exist(slot_no).unwrap_or(self.end_save_slots.contains_key(&slot_no)) as i32)
+                            .unwrap_or(0)
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_NO_WIPE_ANIME_ONOFF {
                         self.no_wipe_anime_onoff_flag
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_SKIP_WIPE_ANIME_ONOFF {
@@ -556,12 +567,10 @@ impl Vm {
                             .and_then(|slot_no| self.quick_save_slots.get(&slot_no))
                             .map(|s| s.scene_title.clone())
                             .unwrap_or_default(),
-                        y if y == crate::elm::syscom::ELM_SYSCOM_GET_QUICK_SAVE_MESSAGE => {
-                            slot_no
-                                .and_then(|slot_no| self.quick_save_slots.get(&slot_no))
-                                .map(|s| s.message.clone())
-                                .unwrap_or_default()
-                        }
+                        y if y == crate::elm::syscom::ELM_SYSCOM_GET_QUICK_SAVE_MESSAGE => slot_no
+                            .and_then(|slot_no| self.quick_save_slots.get(&slot_no))
+                            .map(|s| s.message.clone())
+                            .unwrap_or_default(),
                         _ => String::new(),
                     };
                     self.stack.push_str(text);
@@ -595,23 +604,20 @@ impl Vm {
                 }
                 Ok(Some(true))
             }
+            x if x == crate::elm::syscom::ELM_SYSCOM_RETURN_TO_SEL => {
+                self.handle_syscom_return_to_sel(args, ret_form, provider, host)
+            }
             x if x == crate::elm::syscom::ELM_SYSCOM_RETURN_TO_MENU => {
-                let target = if let Some(one_shot) = self.return_scene_once.take() {
-                    Some(one_shot)
-                } else {
-                    self.options.return_menu_scene.clone()
-                };
-                if let Some((scene, z)) = target {
-                    self.proc_jump(&scene, z, provider)?;
-                    if self.frames.len() > 1 {
-                        self.frames.truncate(1);
-                    }
-                    self.clear_transient_flow_state();
-                } else {
-                    self.halted = true;
-                }
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
-                Ok(Some(true))
+                self.handle_syscom_return_to_menu(args, ret_form, provider, host)
+            }
+            x if x == crate::elm::syscom::ELM_SYSCOM_END_GAME => {
+                self.handle_syscom_end_game(args, ret_form, provider, host)
+            }
+            x if x == crate::elm::syscom::ELM_SYSCOM_END_SAVE => {
+                self.handle_syscom_end_save(args, ret_form, host)
+            }
+            x if x == crate::elm::syscom::ELM_SYSCOM_END_LOAD => {
+                self.handle_syscom_end_load(args, ret_form, provider, host)
             }
             x if x == crate::elm::syscom::ELM_SYSCOM_SET_RETURN_SCENE_ONCE => {
                 let scene_name = match args.first().map(|p| &p.value) {
@@ -644,9 +650,6 @@ impl Vm {
                 Ok(Some(true))
             }
             x if x == crate::elm::syscom::ELM_SYSCOM_GET_SYSTEM_EXTRA_STR_VALUE => {
-                // C++ reference: cmd_syscom.cpp::ELM_SYSCOM_GET_SYSTEM_EXTRA_STR_VALUE.
-                // C++ bounds check uses system_int_value_cnt for this branch; Rust mirrors
-                // that legacy behavior by gating with system_extra_int_values.len().
                 let idx = Self::arg_int(args, 0);
                 if ret_form == crate::elm::form::STR {
                     let s = if idx >= 0 && (idx as usize) < self.system_extra_int_values.len() {
@@ -664,8 +667,6 @@ impl Vm {
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_open_dialog(x) => {
-                // STUB(C++: cmd_syscom.cpp::ELM_SYSCOM_OPEN_TWEET_DIALOG -> tnm_twitter_start())
-                // Rust currently emits host callback only (no real tweet/upload pipeline yet).
                 host.on_open_tweet_dialog();
                 if ret_form == crate::elm::form::INT {
                     self.stack.push_int(0);

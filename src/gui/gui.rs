@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Instant;
 
@@ -16,7 +16,7 @@ mod gui_config;
 mod stage;
 
 use gui_assets::*;
-use gui_config::{load_run_config, RunConfig};
+use gui_config::{RunConfig, load_run_config};
 use stage::{
     is_visual_or_flow_command, looks_like_stage_object_path, parse_stage_object_command,
     parse_stage_object_prop, parse_stage_plane_command, summarize_props,
@@ -136,8 +136,10 @@ enum HostEvent {
     MsgBackState(bool),
     MsgBackDisplayEnabled(bool),
     OpenTweetDialog,
+    ConfirmReturnToMenuWarning,
     StartWipe {
         duration_ms: u64,
+        wipe_type: i32,
     },
     Done,
 }
@@ -222,11 +224,13 @@ struct ObjectRenderState {
 struct GuiHost {
     event_tx: mpsc::Sender<HostEvent>,
     selection_rx: mpsc::Receiver<i32>,
+    return_to_menu_warning_rx: mpsc::Receiver<bool>,
     advance_rx: mpsc::Receiver<AdvanceSignal>,
     skip_mode: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     base_dir: PathBuf,
     append_dirs: Vec<PathBuf>,
+    persistent_state_path: PathBuf,
     objects: BTreeMap<(StagePlane, i32), HostObjectState>,
     next_object_seq: u64,
 }
@@ -252,6 +256,7 @@ include!("host_impl.rs");
 struct GuiApp {
     event_rx: mpsc::Receiver<HostEvent>,
     selection_tx: mpsc::Sender<i32>,
+    return_to_menu_warning_tx: mpsc::Sender<bool>,
     advance_tx: mpsc::Sender<AdvanceSignal>,
     skip_mode: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
@@ -274,6 +279,7 @@ struct GuiApp {
     tweet_screen_name: String,
     tweet_status_line: String,
     tweet_confirm_empty: bool,
+    show_return_to_menu_warning: bool,
     background_texture: Option<egui::TextureHandle>,
     background_textures: BTreeMap<StagePlane, egui::TextureHandle>,
     missing_background_names: BTreeMap<StagePlane, String>,
@@ -291,6 +297,7 @@ struct GuiApp {
     scene_size: Option<(i32, i32)>,
     wipe_started_at: Option<Instant>,
     wipe_duration_ms: u64,
+    wipe_type: i32,
 
     start_time: Instant,
 }
@@ -334,6 +341,7 @@ impl eframe::App for GuiApp {
                     self.draw_toolbar(ui);
                 }
 
+                self.draw_return_to_menu_warning(ui);
                 self.draw_tweet_dialog(ui);
                 self.draw_wipe_overlay(ui);
             });
@@ -346,6 +354,7 @@ impl eframe::App for GuiApp {
         self.shutdown.store(true, Ordering::Relaxed);
         let _ = self.advance_tx.send(AdvanceSignal::Shutdown);
         let _ = self.selection_tx.send(0); // unblock selection wait
+        let _ = self.return_to_menu_warning_tx.send(true);
     }
 }
 
@@ -404,6 +413,27 @@ fn save_persistent_state(path: &Path, state: &siglus::vm::VmPersistentState) -> 
         .with_context(|| format!("failed to write persistent state: {}", path.display()))
 }
 
+fn load_end_save_state(path: &Path) -> Result<Option<siglus::vm::VmEndSaveState>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read end-save state: {}", path.display()))?;
+    let st = siglus::vm::VmEndSaveState::decode_binary(&bytes)
+        .with_context(|| format!("failed to parse end-save state: {}", path.display()))?;
+    Ok(Some(st))
+}
+
+fn save_end_save_state(path: &Path, state: &siglus::vm::VmEndSaveState) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create end-save dir: {}", parent.display()))?;
+    }
+    std::fs::write(path, state.encode_binary())
+        .with_context(|| format!("failed to write end-save state: {}", path.display()))
+}
+
+
 fn run_gui(args: RunConfig) -> Result<()> {
     // Initialize logging
     if let Err(e) = GuiApp::init_logging() {
@@ -413,6 +443,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
 
     let (event_tx, event_rx) = mpsc::channel::<HostEvent>();
     let (selection_tx, selection_rx) = mpsc::channel::<i32>();
+    let (return_to_menu_warning_tx, return_to_menu_warning_rx) = mpsc::channel::<bool>();
     let (advance_tx, advance_rx) = mpsc::channel::<AdvanceSignal>();
     let skip_mode = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -430,6 +461,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
             let mut host = GuiHost {
                 event_tx: worker_event_tx,
                 selection_rx,
+                return_to_menu_warning_rx,
                 advance_rx,
                 skip_mode: worker_skip,
                 shutdown: worker_shutdown,
@@ -439,6 +471,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
                     .unwrap_or(&PathBuf::from("."))
                     .to_path_buf(),
                 append_dirs: args.append_search_dirs.clone(),
+                persistent_state_path: args.persistent_state_path.clone(),
                 objects: BTreeMap::new(),
                 next_object_seq: 1,
             };
@@ -460,6 +493,8 @@ fn run_gui(args: RunConfig) -> Result<()> {
                     return_menu_scene: Some((args.menu_scene.clone(), args.menu_z)),
                     system_extra_int_values: args.system_extra_int_values.clone(),
                     system_extra_str_values: args.system_extra_str_values.clone(),
+                    load_wipe_type: args.load_wipe_type,
+                    load_wipe_time_ms: args.load_wipe_time_ms,
                     ..siglus::vm::VmOptions::default()
                 },
                 state_in.as_ref(),
@@ -486,6 +521,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
     let app = GuiApp::new(
         event_rx,
         selection_tx.clone(),
+        return_to_menu_warning_tx.clone(),
         advance_tx.clone(),
         skip_mode.clone(),
         shutdown.clone(),

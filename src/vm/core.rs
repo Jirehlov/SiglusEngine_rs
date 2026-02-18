@@ -39,7 +39,6 @@ impl Vm {
         }
         cur
     }
-
     pub fn new(scene: String, dat: Arc<SceneDat>) -> Self {
         let lexer = SceneLexer::new(dat.clone());
         let (user_prop_forms, user_prop_values) = make_user_props(&dat);
@@ -62,15 +61,12 @@ impl Vm {
             steps: 0,
             halted: false,
             scene_title: String::new(),
-
             options: options.clone(),
             stats: VmStats::default(),
             user_prop_forms,
             user_prop_values,
-
             frame_action: FrameAction::default(),
             frame_action_ch: Vec::new(),
-
             flags_a: vec![0i32; FLAG_LIST_SIZE],
             flags_b: vec![0i32; FLAG_LIST_SIZE],
             flags_c: vec![0i32; FLAG_LIST_SIZE],
@@ -84,13 +80,11 @@ impl Vm {
             flags_m: vec![String::new(); FLAG_LIST_SIZE],
             global_namae: vec![String::new(); FLAG_LIST_SIZE],
             local_namae: vec![String::new(); FLAG_LIST_SIZE],
-
             save_point_set: false,
             sel_point_set: false,
             save_point_snapshot: None,
             sel_point_snapshot: None,
             sel_point_stock: None,
-
             cur_mwnd_element: vec![
                 crate::elm::global::ELM_GLOBAL_FRONT,
                 crate::elm::objectlist::ELM_STAGE_MWND,
@@ -104,7 +98,6 @@ impl Vm {
                 -1,
             ],
             last_sel_msg: String::new(),
-
             hide_mwnd_onoff_flag: 0,
             hide_mwnd_enable_flag: 1,
             hide_mwnd_exist_flag: 1,
@@ -130,10 +123,18 @@ impl Vm {
             save_exist_flag: 1,
             load_enable_flag: 1,
             load_exist_flag: 1,
+            end_game_enable_flag: 1,
+            end_game_exist_flag: 1,
+            game_end_flag: 0,
+            game_end_no_warning_flag: 0,
+            game_end_save_done_flag: 0,
             no_wipe_anime_onoff_flag: if options.no_wipe_anime { 1 } else { 0 },
             skip_wipe_anime_onoff_flag: if options.skip_wipe_anime { 1 } else { 0 },
             script_skip_unread_message_flag: 0,
             script_stage_time_stop_flag: 0,
+            system_wipe_flag: 0,
+            do_frame_action_flag: 0,
+            do_load_after_call_flag: 0,
             system_extra_int_values: options.system_extra_int_values.clone(),
             system_extra_str_values: options.system_extra_str_values.clone(),
             return_scene_once: None,
@@ -141,13 +142,12 @@ impl Vm {
             last_pc: 0,
             last_line_no: 0,
             last_scene: String::new(),
-
             local_save_slots: BTreeMap::new(),
             quick_save_slots: BTreeMap::new(),
             inner_save_slots: BTreeMap::new(),
+            end_save_slots: BTreeMap::new(),
         }
     }
-
     pub(super) fn snapshot_local_state(&self) -> VmLocalState {
         VmLocalState {
             scene: self.scene.clone(),
@@ -205,16 +205,23 @@ impl Vm {
             save_exist_flag: self.save_exist_flag,
             load_enable_flag: self.load_enable_flag,
             load_exist_flag: self.load_exist_flag,
+            end_game_enable_flag: self.end_game_enable_flag,
+            end_game_exist_flag: self.end_game_exist_flag,
+            game_end_flag: self.game_end_flag,
+            game_end_no_warning_flag: self.game_end_no_warning_flag,
+            game_end_save_done_flag: self.game_end_save_done_flag,
             no_wipe_anime_onoff_flag: self.no_wipe_anime_onoff_flag,
             skip_wipe_anime_onoff_flag: self.skip_wipe_anime_onoff_flag,
             script_skip_unread_message_flag: self.script_skip_unread_message_flag,
             script_stage_time_stop_flag: self.script_stage_time_stop_flag,
+            system_wipe_flag: self.system_wipe_flag,
+            do_frame_action_flag: self.do_frame_action_flag,
+            do_load_after_call_flag: self.do_load_after_call_flag,
             last_pc: self.last_pc,
             last_line_no: self.last_line_no,
             last_scene: self.last_scene.clone(),
         }
     }
-
     pub(super) fn apply_local_state(&mut self, st: &VmLocalState) {
         self.scene = st.scene.clone();
         self.lexer = st.lexer.clone();
@@ -268,16 +275,23 @@ impl Vm {
         self.save_exist_flag = st.save_exist_flag;
         self.load_enable_flag = st.load_enable_flag;
         self.load_exist_flag = st.load_exist_flag;
+        self.end_game_enable_flag = st.end_game_enable_flag;
+        self.end_game_exist_flag = st.end_game_exist_flag;
+        self.game_end_flag = st.game_end_flag;
+        self.game_end_no_warning_flag = st.game_end_no_warning_flag;
+        self.game_end_save_done_flag = st.game_end_save_done_flag;
         self.no_wipe_anime_onoff_flag = st.no_wipe_anime_onoff_flag;
         self.skip_wipe_anime_onoff_flag = st.skip_wipe_anime_onoff_flag;
         self.options.no_wipe_anime = self.no_wipe_anime_onoff_flag != 0;
         self.options.skip_wipe_anime = self.skip_wipe_anime_onoff_flag != 0;
         self.script_skip_unread_message_flag = st.script_skip_unread_message_flag;
         self.script_stage_time_stop_flag = st.script_stage_time_stop_flag;
+        self.system_wipe_flag = st.system_wipe_flag;
+        self.do_frame_action_flag = st.do_frame_action_flag;
+        self.do_load_after_call_flag = st.do_load_after_call_flag;
         self.last_pc = st.last_pc;
         self.last_line_no = st.last_line_no;
         self.last_scene = st.last_scene.clone();
-
         self.save_point_snapshot = st.save_point_snapshot.clone();
         self.sel_point_snapshot = st.sel_point_snapshot.clone();
         self.sel_point_stock = st.sel_point_stock.clone();
@@ -291,7 +305,6 @@ impl Vm {
         self.system_extra_int_values = self.options.system_extra_int_values.clone();
         self.system_extra_str_values = self.options.system_extra_str_values.clone();
     }
-
     pub fn snapshot_persistent_state(&self) -> VmPersistentState {
         VmPersistentState {
             flags_a: self.flags_a.clone(),
@@ -311,20 +324,29 @@ impl Vm {
             sel_point_set: self.sel_point_set,
         }
     }
-
+    pub fn snapshot_end_save_state(&self) -> VmEndSaveState {
+        VmEndSaveState {
+            scene_title: self.scene_title.clone(),
+            message: self.last_sel_msg.clone(),
+            persistent: self.snapshot_persistent_state(),
+            // STUB(C++: eng_syscom.cpp::tnm_saveload_proc_end_save local payload)
+            // Gap: full VmLocalState parity is still pending (e.g. additional mwnd/msg-back side paths and failure semantics).
+            // Expected: end-load should eventually match C++ local continuation semantics branch-by-branch.
+            // Validation: run END_SAVE -> END_LOAD cross-process and verify call/user-prop/frame-action continuity.
+            runtime: Some(self.snapshot_end_save_runtime_state()),
+        }
+    }
     pub fn apply_persistent_state(&mut self, st: &VmPersistentState) {
         fn restore_fixed_i32(dst: &mut Vec<i32>, src: &[i32]) {
             if src.len() == FLAG_LIST_SIZE {
                 *dst = src.to_vec();
             }
         }
-
         fn restore_fixed_string(dst: &mut Vec<String>, src: &[String]) {
             if src.len() == FLAG_LIST_SIZE {
                 *dst = src.to_vec();
             }
         }
-
         restore_fixed_i32(&mut self.flags_a, &st.flags_a);
         restore_fixed_i32(&mut self.flags_b, &st.flags_b);
         restore_fixed_i32(&mut self.flags_c, &st.flags_c);
@@ -352,18 +374,15 @@ impl Vm {
         };
         self.sel_point_stock = None;
     }
-
     pub(super) fn clear_transient_flow_state(&mut self) {
         self.stack = IfcStack::default();
         self.last_sel_msg.clear();
         self.sel_point_stock = None;
         self.return_scene_once = None;
     }
-
     pub(super) fn command_needs_read_flag_tail(element: &[i32]) -> bool {
         crate::elm::global::command_needs_read_flag_tail(element)
     }
-
     pub(super) fn command_text_arg(arg_list_id: i32, args: &[Prop]) -> Option<String> {
         let arg = args.get(0)?;
         match arg_list_id {
@@ -380,7 +399,6 @@ impl Vm {
             _ => None,
         }
     }
-
     pub(super) fn dispatch_message_command(
         &mut self,
         element: &[i32],
@@ -413,11 +431,9 @@ impl Vm {
             _ => {}
         }
     }
-
     pub(super) fn is_selection_command(elm: i32) -> bool {
         crate::elm::global::is_selection_command(elm)
     }
-
     pub(super) fn capture_last_selection_message(
         &mut self,
         element: &[i32],
@@ -433,7 +449,6 @@ impl Vm {
             self.last_sel_msg = msg.clone();
         }
     }
-
     pub fn run(&mut self, host: &mut dyn Host, provider: &mut dyn SceneProvider) -> Result<()> {
         self.run_inner(host, provider).with_context(|| {
             format!(
@@ -442,7 +457,6 @@ impl Vm {
             )
         })
     }
-
     pub(super) fn run_inner(
         &mut self,
         host: &mut dyn Host,
@@ -453,7 +467,6 @@ impl Vm {
             self.last_line_no = self.lexer.cur_line_no;
             self.last_scene = self.scene.clone();
             host.on_location(&self.scene_title, &self.scene, self.lexer.cur_line_no);
-
             if self.steps >= self.max_steps {
                 self.halted = true;
                 break;
@@ -463,16 +476,12 @@ impl Vm {
                 break;
             }
             self.steps += 1;
-
             let code = self.lexer.pop_u8()?;
-
             self.stats.opcode_hits[code as usize] += 1;
-
             if code == cd::SEL_BLOCK_START || code == cd::SEL_BLOCK_END {
                 // Selection blocks are UI-driven; ignore in the headless VM for now.
                 continue;
             }
-
             if code == cd::PUSH {
                 let form_code = self.lexer.pop_i32()?;
                 if form_code == crate::elm::form::INT {
@@ -484,11 +493,9 @@ impl Vm {
                 }
                 continue;
             }
-
             if code == cd::PROPERTY {
                 let element_raw = self.stack.pop_element()?;
                 let element = self.resolve_command_element_alias(&element_raw);
-
                 if let Some((v, form)) = self.try_property_internal(&element) {
                     self.push_vm_value(form, v);
                 } else if let Some((ret, ret_form)) = host.on_property_typed(&element) {
@@ -500,7 +507,6 @@ impl Vm {
                 }
                 continue;
             }
-
             if code == cd::OPERATE_2 {
                 let form_l = self.lexer.pop_i32()?;
                 let form_r = self.lexer.pop_i32()?;
@@ -508,30 +514,24 @@ impl Vm {
                 self.calculate_2(form_l, form_r, opr, host)?;
                 continue;
             }
-
             if code == cd::ELM_POINT {
                 self.stack.elm_point();
                 continue;
             }
-
             if code == cd::ASSIGN {
                 let left_form = self.lexer.pop_i32()?;
                 let right_form = self.lexer.pop_i32()?;
                 let al_id = self.lexer.pop_i32()?;
-
                 // fixed-form rhs
                 let rhs = self.pop_single_arg(right_form)?;
                 let element = self.stack.pop_element()?;
-
                 if !self.try_assign_internal(&element, al_id, &rhs)? {
                     host.on_assign(&element, al_id, &rhs);
                 }
-
                 // left_form currently unused (host decides)
                 let _ = left_form;
                 continue;
             }
-
             if code == cd::NL {
                 let old_line_no = self.lexer.cur_line_no;
                 let line_no = self.lexer.pop_i32()?;

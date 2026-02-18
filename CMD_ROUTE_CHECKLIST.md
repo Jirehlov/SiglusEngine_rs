@@ -75,40 +75,22 @@
 ## 4) 本轮交接（Iteration Handoff）
 
 ### 本轮完成
-- 清空并重建“本轮交接”记录，避免历史多轮条目持续累积导致交接噪声。
-- 本轮聚焦 `cmd_global.cpp::ELM_GLOBAL_RETURNMENU` 与 `cmd_syscom.cpp::ELM_SYSCOM_SET_RETURN_SCENE_ONCE` 的组合路径：
-  - Rust `global.returnmenu(scene[, z])` 现优先采用显式参数目标；
-  - 无显式参数时，按“`return_scene_once` 一次性目标 -> `VmOptions.return_menu_scene` 默认目标”回落；
-  - `return_scene_once` 仅在被消费时 `take()` 清空，保持 one-shot 语义。
-- 本轮补齐 `syscom.return_to_menu` 的最小 VM 消费路径：
-  - 参照 C++ `cmd_syscom.cpp::ELM_SYSCOM_RETURN_TO_MENU`，Rust 新增该路由分支并复用当前 VM 跳转语义（优先 one-shot，再回落默认 menu 目标）；
-  - 现阶段仍属部分复刻：warning/se/fade/msgback_except 等 C++ proc 细节尚未进入 Rust VM 管线。
-- 保持前序已落地的 `GET_SYSTEM_EXTRA_INT_VALUE/STR_VALUE`：
-  - 已接入 `Gameexe.dat` 的 `SYSTEM.EXTRA_*`，并按 C++ 边界回落（越界返回 0/空串）；
-  - `STR` 分支继续镜像 C++ 当前实现的 `system_int_value_cnt` 维度门控。
-- 完成一次全量 `cargo check`，当前无 error 且无 warning。
-
-### Syscom 分支级对照（本轮新增）
-
-> 对照源：`siglus_engine_source/cmd_syscom.cpp` 与 `siglus_rust/src/vm/command_syscom.rs`
-
-| 分组 | C++ 代表分支 | Rust 状态 | 说明 |
-|---|---|---|---|
-| hide mwnd on/off | `SET/GET/CHECK_HIDE_MWND_*` | 🟡 部分复刻（本轮推进） | 已拆分 onoff/enable/exist 三套状态位并接入 CHECK；仍缺与 UI 层状态联动 |
-| wipe anime on/off | `SET_NO_WIPE_ANIME_*` / `SET_SKIP_WIPE_ANIME_*` | 🟡 部分复刻 | 已同步到 VM 选项并参与 wipe wait；其余 syscom 相关联配置仍缺 |
-| save/load 主路径 | `SAVE/LOAD/QUICK/INNER/COPY/CHANGE/DELETE/CHECK` | 🟡 部分复刻（已补边界+flag） | 本地内存槽与 enable/exist/check 基础可工作；源/目标 slot 负数均按无效处理；仍缺 C++ 的 UI/对话框/错误类型与持久化细节 |
-| slot 时间/文本查询 | `GET_SAVE_*` / `GET_QUICK_SAVE_*` | 🟡 部分复刻（本轮补边界） | 读取不存在或非法 slot 返回 0/空串；时间戳来源仍是 Rust 本地时间快照 |
-| open dialog | `OPEN_MSG_BACK` / `CLOSE_MSG_BACK` / `CHECK_MSG_BACK_OPEN` / `OPEN_TWEET_DIALOG` | 🟡 部分复刻（本轮补副作用+快捷键+exist_msg+disable+off写入+disp/proc脚本位+host通知） | msg_back 已接 GUI backlog，`OPEN_MSG_BACK` 成功分支会按 C++ 行为清掉 `read_skip_onoff`；`CHECK_MSG_BACK_ENABLE/OPEN_MSG_BACK` 要求已有历史消息且未被脚本禁用，并由 `CLEAR_MSGBK/INSERT_MSGBK_IMG` 联动历史存在位；文本 print 仅在 `msg_back_off` 关闭时才写入历史可用位；`set_msg_back_disp_off/on` 通过 `on_msg_back_display` 联动 GUI backlog 显隐与手动打开；`set_msg_back_proc_off/on` 当前仅保留状态位 STUB（已撤回推断性输入门控，待找到 C++ 直接消费路径后再补）；tweet 已具备 host 回调 + GUI 占位对话框（认知状态/输入/空文本确认/开闭），但真实上传流程仍未落地 |
-| call_ex | `CALL_EX` | 🟡 部分复刻 | 已能发起 farcall-like 流程；参数/返回与 C++ 细节仍待核对 |
+- 继续对齐 `flow_proc.cpp` 与 `eng_frame.cpp` 的 load 系列全局标志时序，本轮把 C++ 的 `system_wipe_flag / do_frame_action_flag / do_load_after_call_flag` 显式落地到 Rust VM 可观测状态：
+  1) 在 VM Host API 新增 `VmLoadFlowState` 与 `on_syscom_load_flow_state` 回调，建立 VM→Host 的统一状态上报面；
+  2) 在 `run_syscom_proc_queue` 的 `GAME_END_WIPE / GAME_START_WIPE / RETURN_TO_MENU / RETURN_TO_SEL / END_LOAD` 分支中补齐标志位写入与即时上报；
+  3) `END_LOAD` 与 `RETURN_TO_SEL` 现在会在 proc 阶段设置 `do_frame_action/do_load_after_call=true`，与 C++ `tnm_end_load_proc/tnm_return_to_sel_proc` 的关键副作用对齐。
+- 将上述三类标志纳入本地状态与 END_SAVE runtime 快照链路，避免跨命令/跨进程恢复时被丢失：
+  - `VmLocalState` 的 snapshot/apply 已覆盖三标志；
+  - `SESV3` 新格式新增三标志字段，`decode` 兼容旧 `SESV2`（自动回落为 0）。
+- GUI host 实现新增 load-flow 状态日志，后续可以直接对照 `eng_frame.cpp::frame_action_proc` 触发前置条件。
+- 完成 `cargo check` 全量编译校验：当前无 error 且无 warning。
 
 ### 未完成 / 阻塞
-- `cmd_syscom.cpp` 仍有大量分支未进入 Rust 路径（save/load menu 流程、音量/开关矩阵、msg_back 打开状态与 UI 联动等）；`set_return_scene_once` 与 `return_to_menu` 已接 VM 最小消费，但仍缺 C++ 系统菜单/proc 全链路对齐。
-- `OPEN_MSG_BACK` 已接入 GUI backlog 显隐；`msg_back_proc_off/on` 仍缺 C++ 侧直接消费路径（当前仅保留 STUB 状态位），tweet/dialog 仍缺真实上传与结果回调流程。
-- effect/world/steam 行为实现接近空白，后续需要从 C++ 路由逐条补。
+- 目前仅完成“标志位状态对齐 + 可观测性”；`eng_frame.cpp::frame_action_proc` 对这三标志的**消费语义**尚未在 Rust 侧形成等价调度（尤其 `load_after_call_scene` 的 farcall 时机）。
+- `ELM_SYSCOM_LOAD / QUICK_LOAD / INNER_LOAD` 仍走 Rust 直接恢复路径，尚未完全改造成 C++ 的 proc 驱动模型（含 fade/wipe 与 frame 驱动耦合）。
+- `SESV2` 历史文件会按默认 0 补齐新标志，虽然可读，但不具备新增字段的原始语义信息。
 
 ### 下一轮首要任务（可直接执行）
-1. 继续 `cmd_script.cpp` + `eng_frame.cpp`：核对 `msg_back_proc_on/off` 的 C++ 细粒度消费路径（当前 Rust 仅保留 STUB 状态位，未再引入推断性输入行为）。
-2. 推进 `OPEN_TWEET_DIALOG`：把占位输入/发送状态替换为真实授权与上传回调，逐步对齐 C++ 的 `sys_wnd_solo_tweet`。
-3. 继续核对 `SET_RETURN_SCENE_ONCE` + `SYSCOM_RETURN_TO_MENU` 与 C++ 系统菜单/proc 管线的差异（包括 warning/se/fade/msgback_except、调用入口与清理时机）。
-4. 继续补齐 `msg_back` 打开态与系统菜单流程联动（含 proc/disp/disable 多位组合边界）。
-5. 完成后再次保持 `cargo check` 无 error/warning。
+1. 对照 `eng_frame.cpp::frame_action_proc`，在 Rust VM/Host 帧循环补齐 `do_load_after_call_flag` 的一次性消费与 `load_after_call_scene` 调度。
+2. 将 `ELM_SYSCOM_LOAD / QUICK_LOAD / INNER_LOAD` 迁移到统一 proc 队列路径，复用本轮新增的三标志写入与上报语义。
+3. 继续对照 `eng_disp_wipe.cpp`，拆分 `GAME_START_WIPE` 与 `GAME_END_WIPE` 的视觉/范围差异并落地到 host 渲染侧。

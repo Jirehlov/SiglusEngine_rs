@@ -170,7 +170,11 @@ impl siglus::vm::Host for GuiHost {
             if siglus::elm::global::is_wipe_start_command(elm) {
                 // C++ source of truth: cmd_wipe.cpp::tnm_command_proc_wipe
                 let duration_ms = parse_wipe_duration_from_cpp(elm, args);
-                let _ = self.event_tx.send(HostEvent::StartWipe { duration_ms });
+                let wipe_type = parse_wipe_type_from_cpp(elm, args);
+                let _ = self.event_tx.send(HostEvent::StartWipe {
+                    duration_ms,
+                    wipe_type,
+                });
                 return siglus::vm::HostReturn::default();
             }
         }
@@ -222,6 +226,182 @@ impl siglus::vm::Host for GuiHost {
         let _ = self.event_tx.send(HostEvent::MsgBackDisplayEnabled(enabled));
     }
 
+    fn on_syscom_return_to_menu_warning(&mut self) -> bool {
+        // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu warning branch.
+        // Block VM until GUI returns YES/NO equivalent.
+        let _ = self.event_tx.send(HostEvent::ConfirmReturnToMenuWarning);
+        loop {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return true;
+            }
+            match self
+                .return_to_menu_warning_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+            {
+                Ok(v) => return v,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+            }
+        }
+    }
+
+    fn on_syscom_return_to_sel_warning(&mut self) -> bool {
+        // TODO(C++: eng_syscom.cpp::tnm_syscom_return_to_sel warning branch)
+        // Missing reason: GUI currently only has dedicated return_to_menu warning dialog wiring.
+        // Expected behavior: dedicated warning text + YES/NO path for return_to_sel.
+        true
+    }
+
+    fn on_syscom_end_game_warning(&mut self) -> bool {
+        // TODO(C++: eng_syscom.cpp::tnm_syscom_end_game warning branch)
+        // Missing reason: GUI currently only has dedicated return_to_menu warning dialog wiring.
+        // Expected behavior: dedicated warning text + YES/NO path for end_game.
+        true
+    }
+
+    fn on_syscom_play_se(&mut self, kind: i32) {
+        // STUB(C++: eng_syscom.cpp syscom SE types: MENU/PREV_SEL/END_GAME)
+        // Missing reason: Rust GUI host has no menu/syscom SE playback path yet.
+        // Expected behavior: play corresponding SE once when each syscom command is confirmed.
+        info!("syscom requested se kind={} (stub)", kind);
+    }
+
+    fn on_syscom_proc_disp(&mut self) {
+        // C++ reference: eng_syscom.cpp fade-out branches push TNM_PROC_TYPE_DISP.
+        info!("syscom DISP proc");
+    }
+
+    fn on_syscom_proc_game_end_wipe(&mut self, wipe_type: i32, wipe_time_ms: u64) {
+        // C++ reference: flow_proc.cpp::tnm_game_end_wipe_proc.
+        let wipe_time_ms = wipe_time_ms.max(1);
+        info!("syscom game_end_wipe wipe_type={} wipe_time_ms={}", wipe_type, wipe_time_ms);
+        let _ = self.event_tx.send(HostEvent::StartWipe {
+            duration_ms: wipe_time_ms,
+            wipe_type,
+        });
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_millis(wipe_time_ms) {
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn on_syscom_proc_game_start_wipe(&mut self, wipe_type: i32, wipe_time_ms: u64) {
+        // TODO(C++: flow_proc.cpp::tnm_game_start_wipe_proc)
+        // Missing reason: start/end wipe ranges are not separated in current renderer path.
+        // Expected behavior: run SYSTEM_IN wipe semantics distinct from GAME_END_WIPE.
+        let wipe_time_ms = wipe_time_ms.max(1);
+        info!(
+            "syscom game_start_wipe wipe_type={} wipe_time_ms={}",
+            wipe_type, wipe_time_ms
+        );
+        let _ = self.event_tx.send(HostEvent::StartWipe {
+            duration_ms: wipe_time_ms,
+            wipe_type,
+        });
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_millis(wipe_time_ms) {
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn on_syscom_proc_return_to_sel(&mut self) {
+        // TODO(C++: flow_proc.cpp::tnm_return_to_sel_proc -> saveload return path)
+        // Missing reason: Rust VM currently restores sel snapshot best-effort without dedicated scene transition event.
+        info!("syscom return_to_sel proc");
+    }
+
+    fn on_syscom_proc_end_game(&mut self) {
+        // TODO(C++: flow_proc.cpp::tnm_end_game_proc)
+        // Missing reason: GUI host lacks dedicated global game-end state pipeline.
+        // Expected behavior: set game_end flags and trigger application-level termination flow.
+        info!("syscom end_game proc");
+    }
+
+    fn on_syscom_proc_end_load_result(&mut self, ok: bool) {
+        // C++ reference: flow_proc.cpp::tnm_end_load_proc invokes tnm_saveload_proc_end_load(),
+        // but proc queue continues regardless; host can still observe actual restore success/failure.
+        info!("syscom end_load restore result <- {}", ok);
+    }
+
+    fn on_syscom_load_flow_state(&mut self, state: siglus::vm::VmLoadFlowState) {
+        // C++ reference: flow_proc.cpp load/return proc family updates these global flags,
+        // consumed later by eng_frame.cpp::frame_action_proc.
+        info!(
+            "syscom load flow state <- wipe={} frame_action={} load_after_call={}",
+            state.system_wipe_flag, state.do_frame_action_flag, state.do_load_after_call_flag
+        );
+    }
+
+    fn on_syscom_end_save_snapshot(&mut self, slot_no: i32, state: &siglus::vm::VmEndSaveState) {
+        let path = self
+            .persistent_state_path
+            .with_file_name(format!("siglus_end_save_{slot_no}.bin"));
+        if let Err(e) = save_end_save_state(&path, state) {
+            error!("syscom end_save snapshot flush failed ({}): {:#}", path.display(), e);
+        }
+    }
+
+    fn on_syscom_end_save_exist(&mut self, slot_no: i32) -> Option<bool> {
+        let path = self
+            .persistent_state_path
+            .with_file_name(format!("siglus_end_save_{slot_no}.bin"));
+        Some(path.exists())
+    }
+
+    fn on_syscom_end_load_snapshot(&mut self, slot_no: i32) -> Option<siglus::vm::VmEndSaveState> {
+        let path = self
+            .persistent_state_path
+            .with_file_name(format!("siglus_end_save_{slot_no}.bin"));
+        match load_end_save_state(&path) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("syscom end_load snapshot read failed ({}): {:#}", path.display(), e);
+                None
+            }
+        }
+    }
+    fn on_syscom_end_game_save_flush(&mut self, state: &siglus::vm::VmPersistentState) {
+        // STUB(C++: eng_syscom.cpp::tnm_syscom_end_game -> tnm_syscom_end_save(false, false))
+        // Current gap: still no dedicated C++-style end-save local slot file/capture pipeline.
+        // Implemented now: flush persistent snapshot immediately to reduce callback-only drift.
+        if let Err(e) = save_persistent_state(&self.persistent_state_path, state) {
+            error!(
+                "syscom end_game save flush failed ({}): {:#}",
+                self.persistent_state_path.display(),
+                e
+            );
+        } else {
+            info!(
+                "syscom end_game save flushed to {}",
+                self.persistent_state_path.display()
+            );
+        }
+    }
+
+    fn on_syscom_return_to_menu_save_global(&mut self, state: &siglus::vm::VmPersistentState) {
+        // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu -> tnm_save_global_on_file().
+        // Rust path: flush VM persistent snapshot immediately at return_to_menu trigger time.
+        if let Err(e) = save_persistent_state(&self.persistent_state_path, state) {
+            error!(
+                "syscom return_to_menu immediate global save failed ({}): {:#}",
+                self.persistent_state_path.display(),
+                e
+            );
+        }
+    }
+
+    fn on_game_timer_move(&mut self, moving: bool) {
+        // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu +
+        // flow_proc.cpp::tnm_game_timer_start_proc.
+        // Rust has no separate game-timer proc queue yet; keep observable timer flag transition.
+        info!("game_timer_move_flag <- {}", moving);
+    }
 
     fn on_open_tweet_dialog(&mut self) {
         // C++ reference: cmd_syscom.cpp::ELM_SYSCOM_OPEN_TWEET_DIALOG -> tnm_twitter_start().
@@ -237,6 +417,29 @@ impl siglus::vm::Host for GuiHost {
             line_no,
         });
     }
+}
+
+fn parse_wipe_type_from_cpp(elm: i32, args: &[siglus::vm::Prop]) -> i32 {
+    // C++ source of truth: cmd_wipe.cpp::tnm_command_proc_wipe
+    // positional arg: WIPE(...): arg0, MASK_WIPE(...): arg1
+    let default_pos = if elm == siglus::elm::global::ELM_GLOBAL_MASK_WIPE
+        || elm == siglus::elm::global::ELM_GLOBAL_MASK_WIPE_ALL
+    {
+        1
+    } else {
+        0
+    };
+    let mut wipe_type = args.get(default_pos).and_then(|p| p.as_int()).unwrap_or(0);
+    // named override: id=0
+    for arg in args {
+        if arg.id == 0 {
+            if let Some(v) = arg.as_int() {
+                wipe_type = v;
+            }
+            break;
+        }
+    }
+    wipe_type
 }
 
 fn parse_wipe_duration_from_cpp(elm: i32, args: &[siglus::vm::Prop]) -> u64 {

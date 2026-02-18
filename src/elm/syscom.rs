@@ -219,6 +219,8 @@ pub fn is_set_enable_flag(elm: i32) -> bool {
         || elm == crate::elm::syscom::ELM_SYSCOM_SET_RETURN_TO_MENU_EXIST_FLAG
         || elm == crate::elm::syscom::ELM_SYSCOM_SET_SAVE_ENABLE_FLAG
         || elm == crate::elm::syscom::ELM_SYSCOM_SET_SAVE_EXIST_FLAG
+        || elm == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_ENABLE_FLAG
+        || elm == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_EXIST_FLAG
         || elm == crate::elm::syscom::ELM_SYSCOM_SET_LOAD_ENABLE_FLAG
         || elm == crate::elm::syscom::ELM_SYSCOM_SET_LOAD_EXIST_FLAG
 }
@@ -237,6 +239,7 @@ pub fn is_feature_check_query(elm: i32) -> bool {
         || elm == crate::elm::syscom::ELM_SYSCOM_CHECK_RETURN_TO_SEL_ENABLE
         || elm == crate::elm::syscom::ELM_SYSCOM_CHECK_RETURN_TO_MENU_ENABLE
         || elm == crate::elm::syscom::ELM_SYSCOM_CHECK_SAVE_ENABLE
+        || elm == crate::elm::syscom::ELM_SYSCOM_CHECK_END_GAME_ENABLE
         || elm == crate::elm::syscom::ELM_SYSCOM_CHECK_LOAD_ENABLE
 }
 
@@ -515,3 +518,11 @@ pub const ELM_SYSCOM_MSG_BACK_GET_MESSAGE: i32 = 336; // msg_back_get_message
 pub const ELM_SYSCOM_MSG_BACK_GET_NAME: i32 = 337; // msg_back_get_name
 pub const ELM_SYSCOM_MSG_BACK_GET_KOE_NO: i32 = 338; // msg_back_get_koe_no
 pub const ELM_SYSCOM_MSG_BACK_GET_CHR_NO: i32 = 339; // msg_back_get_chr_no
+
+
+// C++ eng_syscom.cpp syscom SE kind mapping.
+pub const SE_KIND_MENU: i32 = 6;
+pub const SE_KIND_PREV_SEL: i32 = 7;
+pub const SE_KIND_END_GAME: i32 = 2;
+pub const SE_KIND_SAVE: i32 = 4;
+pub const SE_KIND_LOAD: i32 = 5;

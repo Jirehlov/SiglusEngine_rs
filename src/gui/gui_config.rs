@@ -15,6 +15,8 @@ pub(super) struct RunConfig {
     pub(super) scene_size: Option<(i32, i32)>,
     pub(super) system_extra_int_values: Vec<i32>,
     pub(super) system_extra_str_values: Vec<String>,
+    pub(super) load_wipe_type: i32,
+    pub(super) load_wipe_time_ms: u64,
 }
 
 fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>, Vec<String>) {
@@ -52,6 +54,20 @@ fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>,
     (int_values, str_values)
 }
 
+fn parse_load_wipe(cfg: &siglus::gameexe::GameexeConfig) -> (i32, u64) {
+    // C++ reference: tnm_ini.cpp::LOAD_WIPE(num[0]=type, num[1]=time), defaults 0/1000.
+    let wipe_type = cfg
+        .first_values("LOAD_WIPE")
+        .and_then(|vals| vals.first())
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .unwrap_or(0);
+    let wipe_time_ms = cfg
+        .first_values("LOAD_WIPE")
+        .and_then(|vals| vals.get(1))
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(1000);
+    (wipe_type, wipe_time_ms)
+}
 
 fn parse_select_ini_dirs(exe_dir: &std::path::Path) -> Result<Vec<PathBuf>> {
     let ini_path = exe_dir.join("Select.ini");
@@ -142,6 +158,7 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
 
     let persistent_state_path = base_dir.join("siglus_vm_state.bin");
     let (system_extra_int_values, system_extra_str_values) = parse_system_extra_values(&cfg);
+    let (load_wipe_type, load_wipe_time_ms) = parse_load_wipe(&cfg);
 
     Ok(RunConfig {
         gameexe,
@@ -158,5 +175,7 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
         scene_size: cfg.screen_size,
         system_extra_int_values,
         system_extra_str_values,
+        load_wipe_type,
+        load_wipe_time_ms,
     })
 }

@@ -48,6 +48,13 @@ pub struct HostReturn {
     pub element: Vec<i32>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VmLoadFlowState {
+    pub system_wipe_flag: bool,
+    pub do_frame_action_flag: bool,
+    pub do_load_after_call_flag: bool,
+}
+
 pub trait Host {
     fn on_name(&mut self, _name: &str) {}
     fn on_text(&mut self, _text: &str, _read_flag_no: i32) {}
@@ -92,9 +99,88 @@ pub trait Host {
     /// Notify host that msg_back display availability changed (script disp_off/on).
     fn on_msg_back_display(&mut self, _enabled: bool) {}
 
-
     /// Notify host that syscom requested opening the tweet dialog.
     fn on_open_tweet_dialog(&mut self) {}
+
+    /// C++ reference: cmd_syscom.cpp::ELM_SYSCOM_RETURN_TO_MENU warning branch.
+    /// Return `false` to emulate user-cancel in warning dialog.
+    fn on_syscom_return_to_menu_warning(&mut self) -> bool {
+        true
+    }
+
+    /// C++ reference: cmd_syscom.cpp::ELM_SYSCOM_RETURN_TO_SEL warning branch.
+    fn on_syscom_return_to_sel_warning(&mut self) -> bool {
+        true
+    }
+
+    /// C++ reference: cmd_syscom.cpp::ELM_SYSCOM_END_GAME warning branch.
+    fn on_syscom_end_game_warning(&mut self) -> bool {
+        true
+    }
+
+    /// C++ reference: eng_syscom.cpp::tnm_syscom_end_save warning branch.
+    fn on_syscom_end_save_warning(&mut self) -> bool {
+        true
+    }
+
+    /// C++ reference: eng_syscom.cpp::tnm_syscom_end_load warning branch.
+    fn on_syscom_end_load_warning(&mut self) -> bool {
+        true
+    }
+
+    /// C++ reference: eng_syscom.cpp syscom SE triggers.
+    /// `kind` uses `elm::syscom::SE_KIND_*` constants.
+    fn on_syscom_play_se(&mut self, _kind: i32) {}
+
+    /// C++ reference: eng_syscom.cpp fade-out branches -> TNM_PROC_TYPE_DISP.
+    fn on_syscom_proc_disp(&mut self) {}
+
+    /// C++ reference: flow_proc.cpp::tnm_game_end_wipe_proc.
+    fn on_syscom_proc_game_end_wipe(&mut self, _wipe_type: i32, _wipe_time_ms: u64) {}
+
+    /// C++ reference: flow_proc.cpp::tnm_game_start_wipe_proc.
+    fn on_syscom_proc_game_start_wipe(&mut self, _wipe_type: i32, _wipe_time_ms: u64) {}
+
+    /// C++ reference: flow_proc.cpp::tnm_return_to_sel_proc.
+    fn on_syscom_proc_return_to_sel(&mut self) {}
+
+    /// C++ reference: flow_proc.cpp::tnm_end_game_proc.
+    fn on_syscom_proc_end_game(&mut self) {}
+
+    /// C++ reference: flow_proc.cpp::tnm_end_load_proc + eng_scene.cpp::tnm_saveload_proc_end_load.
+    /// Reports the internal end-load restore result. Note that cmd-level END_LOAD may already
+    /// have returned success once the proc is accepted (C++ queue semantics).
+    fn on_syscom_proc_end_load_result(&mut self, _ok: bool) {}
+
+    /// C++ reference: flow_proc.cpp load-family procs update
+    /// system_wipe_flag/do_frame_action_flag/do_load_after_call_flag.
+    fn on_syscom_load_flow_state(&mut self, _state: VmLoadFlowState) {}
+
+    /// C++ reference: eng_syscom.cpp::tnm_syscom_end_game -> tnm_syscom_end_save(false, false).
+    /// Called immediately when END_GAME command is accepted.
+    fn on_syscom_end_game_save_flush(&mut self, _state: &crate::vm::VmPersistentState) {}
+
+    /// Host-side optional end-save persistence hook (slot-indexed).
+    fn on_syscom_end_save_snapshot(&mut self, _slot_no: i32, _state: &crate::vm::VmEndSaveState) {}
+
+    /// Host-side optional end-save existence query.
+    fn on_syscom_end_save_exist(&mut self, _slot_no: i32) -> Option<bool> {
+        None
+    }
+
+    /// Host-side optional end-save load hook.
+    fn on_syscom_end_load_snapshot(&mut self, _slot_no: i32) -> Option<crate::vm::VmEndSaveState> {
+        None
+    }
+
+    /// C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu -> tnm_save_global_on_file().
+    /// Called before return-menu scene restart to allow host persistence sync.
+    fn on_syscom_return_to_menu_save_global(&mut self, _state: &crate::vm::VmPersistentState) {}
+
+    /// C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu and
+    /// flow_proc.cpp::tnm_game_timer_start_proc.
+    /// `moving=false` is emitted before jump; `moving=true` after restart.
+    fn on_game_timer_move(&mut self, _moving: bool) {}
 
     /// Called periodically by the VM to check if execution should be aborted.
     fn should_interrupt(&self) -> bool {

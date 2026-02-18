@@ -356,7 +356,7 @@ impl GuiApp {
             let text_font = egui::FontId::proportional(18.0);
             let text_galley = ui.painter().layout(
                 self.current_text.clone(),
-                text_font,
+                text_font.clone(),
                 egui::Color32::from_rgb(230, 235, 245),
                 text_rect.width(),
             );
@@ -572,6 +572,95 @@ impl GuiApp {
             });
     }
 
+    fn draw_return_to_menu_warning(&mut self, ui: &mut egui::Ui) {
+        if !self.show_return_to_menu_warning {
+            return;
+        }
+        let screen = ui.max_rect();
+        ui.painter().rect_filled(
+            screen,
+            0.0,
+            egui::Color32::from_rgba_premultiplied(0, 0, 0, 170),
+        );
+
+        let panel = egui::Rect::from_center_size(screen.center(), egui::vec2(480.0, 180.0));
+        ui.painter().rect_filled(
+            panel,
+            10.0,
+            egui::Color32::from_rgba_premultiplied(30, 35, 50, 245),
+        );
+        ui.painter().rect_stroke(
+            panel,
+            10.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(140, 160, 210, 220)),
+            egui::StrokeKind::Outside,
+        );
+
+        let title_font = egui::FontId::proportional(20.0);
+        let text_font = egui::FontId::proportional(16.0);
+        let title = ui.painter().layout_no_wrap(
+            "RETURN TO MENU".to_string(),
+            title_font,
+            egui::Color32::from_rgb(230, 235, 245),
+        );
+        ui.painter().galley(
+            egui::pos2(panel.center().x - title.size().x / 2.0, panel.top() + 20.0),
+            title,
+            egui::Color32::WHITE,
+        );
+        let msg = ui.painter().layout_no_wrap(
+            "タイトルメニューに戻りますか？".to_string(),
+            text_font.clone(),
+            egui::Color32::from_rgb(215, 220, 230),
+        );
+        ui.painter().galley(
+            egui::pos2(panel.center().x - msg.size().x / 2.0, panel.top() + 64.0),
+            msg,
+            egui::Color32::WHITE,
+        );
+
+        let yes_rect = egui::Rect::from_min_size(
+            egui::pos2(panel.center().x - 170.0, panel.bottom() - 58.0),
+            egui::vec2(140.0, 36.0),
+        );
+        let no_rect = egui::Rect::from_min_size(
+            egui::pos2(panel.center().x + 30.0, panel.bottom() - 58.0),
+            egui::vec2(140.0, 36.0),
+        );
+        let yes = ui.allocate_rect(yes_rect, egui::Sense::click());
+        let no = ui.allocate_rect(no_rect, egui::Sense::click());
+
+        for (rect, resp, text, active) in [
+            (yes_rect, yes, "YES", true),
+            (no_rect, no, "NO", false),
+        ] {
+            let bg = if resp.hovered() {
+                egui::Color32::from_rgba_premultiplied(80, 110, 180, 240)
+            } else {
+                egui::Color32::from_rgba_premultiplied(50, 70, 120, 220)
+            };
+            ui.painter().rect_filled(rect, 6.0, bg);
+            let fg = if active {
+                egui::Color32::from_rgb(250, 250, 255)
+            } else {
+                egui::Color32::from_rgb(235, 235, 245)
+            };
+            let g = ui.painter().layout_no_wrap(text.to_string(), text_font.clone(), fg);
+            ui.painter().galley(
+                egui::pos2(
+                    rect.center().x - g.size().x / 2.0,
+                    rect.center().y - g.size().y / 2.0,
+                ),
+                g,
+                egui::Color32::WHITE,
+            );
+            if resp.clicked() {
+                let _ = self.return_to_menu_warning_tx.send(active);
+                self.show_return_to_menu_warning = false;
+            }
+        }
+    }
+
     fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
         let screen = ui.max_rect();
 
@@ -639,10 +728,13 @@ impl GuiApp {
         if alpha == 0 {
             return;
         }
-        ui.painter().rect_filled(
-            ui.max_rect(),
-            0.0,
-            egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
-        );
+        let color = match self.wipe_type.rem_euclid(4) {
+            // Approximate C++ wipe families with distinct observable overlays.
+            0 => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
+            1 => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+            2 => egui::Color32::from_rgba_premultiplied(0, 0, 64, alpha),
+            _ => egui::Color32::from_rgba_premultiplied(32, 0, 0, alpha),
+        };
+        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
     }
 }

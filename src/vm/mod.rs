@@ -1,22 +1,27 @@
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::{dat::SceneDat, lexer::SceneLexer, stack::IfcStack};
 
 mod api;
 mod command_head;
-mod command_syscom;
 mod command_misc;
+mod command_syscom;
+mod command_syscom_endio;
+mod command_syscom_return;
 mod command_tail;
 mod command_try;
 mod core;
+mod end_save_runtime;
+mod end_save_state;
 mod opcode;
 mod persistent;
 mod props;
 mod stack_ops;
 
 pub use api::*;
+pub use end_save_state::*;
 pub use persistent::*;
 
 pub trait SceneProvider {
@@ -52,6 +57,10 @@ pub struct VmOptions {
     pub no_wipe_anime_default: bool,
     /// Current no-wipe-anime policy mirroring C++ runtime system.no_wipe_anime_flag.
     pub no_wipe_anime: bool,
+    /// C++ tnm_ini.cpp: LOAD_WIPE first parameter (default 0).
+    pub load_wipe_type: i32,
+    /// C++ tnm_ini.cpp: LOAD_WIPE second parameter (default 1000).
+    pub load_wipe_time_ms: u64,
     /// C++ tnm_ini.cpp: SYSTEM.EXTRA_INT_VALUE indexed array.
     pub system_extra_int_values: Vec<i32>,
     /// C++ tnm_ini.cpp: SYSTEM.EXTRA_STR_VALUE indexed array.
@@ -77,6 +86,8 @@ impl Default for VmOptions {
             skip_wipe_anime_default: true,
             no_wipe_anime_default: false,
             no_wipe_anime: false,
+            load_wipe_type: 0,
+            load_wipe_time_ms: 1000,
             system_extra_int_values: Vec::new(),
             system_extra_str_values: Vec::new(),
         }
@@ -291,10 +302,18 @@ struct VmLocalState {
     save_exist_flag: i32,
     load_enable_flag: i32,
     load_exist_flag: i32,
+    end_game_enable_flag: i32,
+    end_game_exist_flag: i32,
+    game_end_flag: i32,
+    game_end_no_warning_flag: i32,
+    game_end_save_done_flag: i32,
     no_wipe_anime_onoff_flag: i32,
     skip_wipe_anime_onoff_flag: i32,
     script_skip_unread_message_flag: i32,
     script_stage_time_stop_flag: i32,
+    system_wipe_flag: i32,
+    do_frame_action_flag: i32,
+    do_load_after_call_flag: i32,
     last_pc: usize,
     last_line_no: i32,
     last_scene: String,
@@ -377,10 +396,18 @@ pub struct Vm {
     save_exist_flag: i32,
     load_enable_flag: i32,
     load_exist_flag: i32,
+    end_game_enable_flag: i32,
+    end_game_exist_flag: i32,
+    game_end_flag: i32,
+    game_end_no_warning_flag: i32,
+    game_end_save_done_flag: i32,
     no_wipe_anime_onoff_flag: i32,
     skip_wipe_anime_onoff_flag: i32,
     script_skip_unread_message_flag: i32,
     script_stage_time_stop_flag: i32,
+    system_wipe_flag: i32,
+    do_frame_action_flag: i32,
+    do_load_after_call_flag: i32,
     system_extra_int_values: Vec<i32>,
     system_extra_str_values: Vec<String>,
     return_scene_once: Option<(String, i32)>,
@@ -396,6 +423,7 @@ pub struct Vm {
     local_save_slots: BTreeMap<i32, LocalSaveSlot>,
     quick_save_slots: BTreeMap<i32, LocalSaveSlot>,
     inner_save_slots: BTreeMap<i32, LocalSaveSlot>,
+    end_save_slots: BTreeMap<i32, LocalSaveSlot>,
 }
 
 fn make_user_props(dat: &SceneDat) -> (Vec<i32>, Vec<PropValue>) {

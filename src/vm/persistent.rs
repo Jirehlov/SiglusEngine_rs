@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VmPersistentState {

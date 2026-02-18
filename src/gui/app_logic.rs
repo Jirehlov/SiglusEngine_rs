@@ -2,6 +2,7 @@ impl GuiApp {
     fn new(
         event_rx: mpsc::Receiver<HostEvent>,
         selection_tx: mpsc::Sender<i32>,
+        return_to_menu_warning_tx: mpsc::Sender<bool>,
         advance_tx: mpsc::Sender<AdvanceSignal>,
         skip_mode: Arc<AtomicBool>,
         shutdown: Arc<AtomicBool>,
@@ -11,6 +12,7 @@ impl GuiApp {
         Self {
             event_rx,
             selection_tx,
+            return_to_menu_warning_tx,
             advance_tx,
             skip_mode,
             shutdown,
@@ -32,6 +34,7 @@ impl GuiApp {
             tweet_screen_name: String::new(),
             tweet_status_line: "未認証です。先に認証してください。".to_string(),
             tweet_confirm_empty: false,
+            show_return_to_menu_warning: false,
             background_texture: None,
             background_textures: BTreeMap::new(),
             missing_background_names: BTreeMap::new(),
@@ -49,6 +52,7 @@ impl GuiApp {
             scene_size,
             wipe_started_at: None,
             wipe_duration_ms: 0,
+            wipe_type: 0,
 
             start_time: Instant::now(),
         }
@@ -279,8 +283,15 @@ impl GuiApp {
                         self.tweet_status_line = "未認証です。先に認証してください。".to_string();
                     }
                 }
-                HostEvent::StartWipe { duration_ms } => {
+                HostEvent::ConfirmReturnToMenuWarning => {
+                    self.show_return_to_menu_warning = true;
+                }
+                HostEvent::StartWipe {
+                    duration_ms,
+                    wipe_type,
+                } => {
                     self.wipe_duration_ms = duration_ms.max(1);
+                    self.wipe_type = wipe_type;
                     self.wipe_started_at = Some(Instant::now());
                 }
             }
