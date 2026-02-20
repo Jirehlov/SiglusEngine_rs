@@ -10,6 +10,9 @@ pub(super) enum SyscomProcType {
     GameTimerStart,
     EndGame,
     EndLoad,
+    Load,
+    QuickLoad,
+    InnerLoad,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,8 +134,47 @@ impl Vm {
                     self.notify_load_flow_state(host);
                     self.clear_transient_flow_state();
                 }
+                SyscomProcType::Load => {
+                    // C++ reference: flow_proc.cpp::tnm_load_proc.
+                    let slot_no = proc.option;
+                    if let Some(slot) = self.local_save_slots.get(&slot_no).cloned() {
+                        self.apply_local_state(&slot.state);
+                    }
+                    self.system_wipe_flag = 1;
+                    self.do_frame_action_flag = 1;
+                    self.do_load_after_call_flag = 1;
+                    self.notify_load_flow_state(host);
+                    self.clear_transient_flow_state();
+                }
+                SyscomProcType::QuickLoad => {
+                    // C++ reference: flow_proc.cpp::tnm_quick_load_proc.
+                    let slot_no = proc.option;
+                    if let Some(slot) = self.quick_save_slots.get(&slot_no).cloned() {
+                        self.apply_local_state(&slot.state);
+                    }
+                    self.system_wipe_flag = 1;
+                    self.do_frame_action_flag = 1;
+                    self.do_load_after_call_flag = 1;
+                    self.notify_load_flow_state(host);
+                    self.clear_transient_flow_state();
+                }
+                SyscomProcType::InnerLoad => {
+                    // C++ reference: flow_proc.cpp::tnm_inner_load_proc.
+                    let slot_no = proc.option;
+                    if let Some(slot) = self.inner_save_slots.get(&slot_no).cloned() {
+                        self.apply_local_state(&slot.state);
+                    }
+                    self.system_wipe_flag = 1;
+                    self.do_frame_action_flag = 1;
+                    self.do_load_after_call_flag = 1;
+                    self.notify_load_flow_state(host);
+                    self.clear_transient_flow_state();
+                }
             }
         }
+        // C++ eng_frame.cpp::frame_action_proc runs after the proc queue in the
+        // same frame. Consume do_load_after_call_flag → farcall dispatch here.
+        self.frame_action_proc(host, provider)?;
         Ok(())
     }
 

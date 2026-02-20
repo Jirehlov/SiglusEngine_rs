@@ -198,6 +198,34 @@ pub trait Host {
 
     fn on_break_step_line_advanced(&mut self) {}
 
+    /// C++ cmd_sound.cpp: BGM play/oneshot/wait/ready.
+    fn on_bgm_play(&mut self, _name: &str, _loop_flag: bool, _wait_flag: bool, _fade_in: i32, _fade_out: i32, _ready: bool) {}
+    /// C++ cmd_sound.cpp: BGM stop.
+    fn on_bgm_stop(&mut self, _fade_out: i32) {}
+    /// C++ cmd_sound.cpp: BGM pause.
+    fn on_bgm_pause(&mut self, _fade: i32) {}
+    /// C++ cmd_sound.cpp: BGM resume.
+    fn on_bgm_resume(&mut self, _fade: i32, _wait: bool) {}
+    /// C++ cmd_sound.cpp: BGM set volume.
+    fn on_bgm_set_volume(&mut self, _sub: i32, _vol: i32) {}
+    /// C++ cmd_sound.cpp: PCM play.
+    fn on_pcm_play(&mut self, _name: &str) {}
+    /// C++ cmd_sound.cpp: PCM stop.
+    fn on_pcm_stop(&mut self) {}
+    /// C++ cmd_sound.cpp: SE play.
+    fn on_se_play(&mut self, _id: i32, _name: &str) {}
+    /// C++ cmd_sound.cpp: SE stop.
+    fn on_se_stop(&mut self, _fade: i32) {}
+    /// C++ cmd_sound.cpp: MOV play.
+    fn on_mov_play(&mut self, _name: &str) {}
+    /// C++ cmd_sound.cpp: MOV stop.
+    fn on_mov_stop(&mut self) {}
+
+    /// C++ eng_frame.cpp::frame_action_proc — load-after-call farcall trigger.
+    /// Called when `do_load_after_call_flag` is consumed and a farcall to
+    /// `load_after_call_scene` / `load_after_call_z_no` is about to execute.
+    fn on_frame_action_load_after_call(&mut self, _scene: &str, _z_no: i32) {}
+
     /// C++ flow_script.cpp fatal parse/eof path hook.
     ///
     /// Expected host-side side effect: switch process to NONE-equivalent.
@@ -209,4 +237,74 @@ pub trait Host {
     fn should_skip_wait(&self) -> bool {
         false
     }
+
+    // ---------------------------------------------------------------
+    // Screen / Effect / Quake Host callbacks (cmd_effect.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_effect.cpp: screen-level property set (x/y/z/mono/etc on effect_list[0]).
+    fn on_screen_property(&mut self, _property_id: i32, _value: i32) {}
+
+    /// C++ cmd_effect.cpp: per-effect property set.
+    fn on_effect_property(&mut self, _property_id: i32, _value: i32) {}
+
+    /// C++ cmd_effect.cpp: effect reinit.
+    fn on_effect_init(&mut self) {}
+
+    /// C++ cmd_effect.cpp: quake start (sub identifies variant).
+    fn on_quake_start(&mut self, _sub: i32) {}
+
+    /// C++ cmd_effect.cpp: quake end.
+    fn on_quake_end(&mut self) {}
+
+    // ---------------------------------------------------------------
+    // World Host callbacks (cmd_world.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_world.cpp: world property set.
+    fn on_world_property(&mut self, _property_id: i32, _value: i32) {}
+
+    /// C++ cmd_world.cpp: create_world.
+    fn on_world_create(&mut self) {}
+
+    /// C++ cmd_world.cpp: destroy_world.
+    fn on_world_destroy(&mut self) {}
+
+    /// C++ cmd_world.cpp: world reinit.
+    fn on_world_init(&mut self) {}
+
+    /// C++ cmd_world.cpp: set_camera_eye / set_camera_pint / set_camera_up.
+    fn on_world_set_camera(&mut self, _sub: i32, _x: i32, _y: i32, _z: i32) {}
+
+    /// C++ cmd_world.cpp: calc_camera_eye / calc_camera_pint.
+    fn on_world_calc_camera(&mut self, _sub: i32, _distance: i32, _rotate_h: i32, _rotate_v: i32) {}
+
+    // ---------------------------------------------------------------
+    // PCMCH Host callbacks (cmd_sound.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_sound.cpp: PCMCH play with full named-arg parameters.
+    fn on_pcmch_play(
+        &mut self,
+        _ch: i32,
+        _name: &str,
+        _loop_flag: bool,
+        _wait_flag: bool,
+        _fade_in: i32,
+        _volume_type: i32,
+        _chara_no: i32,
+        _ready: bool,
+    ) {}
+
+    /// C++ cmd_sound.cpp: PCMCH stop.
+    fn on_pcmch_stop(&mut self, _ch: i32, _fade: i32) {}
+
+    /// C++ cmd_sound.cpp: PCMCH pause.
+    fn on_pcmch_pause(&mut self, _ch: i32, _fade: i32) {}
+
+    /// C++ cmd_sound.cpp: PCMCH resume.
+    fn on_pcmch_resume(&mut self, _ch: i32, _fade: i32, _wait: bool) {}
+
+    /// C++ cmd_sound.cpp: PCMCH set_volume.
+    fn on_pcmch_set_volume(&mut self, _ch: i32, _sub: i32, _vol: i32) {}
 }

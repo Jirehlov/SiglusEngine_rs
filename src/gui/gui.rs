@@ -55,6 +55,17 @@ const SEL_BUTTON_HOVER_BG: egui::Color32 =
 
 // ── Host events (VM thread → GUI thread) ────────────────────────────────
 
+/// C++ wipe range classification:
+/// - `Normal`    = script-level WIPE / MASK_WIPE commands
+/// - `SystemIn`  = TNM_WIPE_RANGE_SYSTEM_IN  (fade *from* black after load)
+/// - `SystemOut` = TNM_WIPE_RANGE_SYSTEM_OUT (fade *to* black before load)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WipeDirection {
+    Normal,
+    SystemIn,
+    SystemOut,
+}
+
 enum HostEvent {
     Name(String),
     Text {
@@ -140,6 +151,7 @@ enum HostEvent {
     StartWipe {
         duration_ms: u64,
         wipe_type: i32,
+        wipe_direction: WipeDirection,
     },
     Done,
 }
@@ -298,6 +310,7 @@ struct GuiApp {
     wipe_started_at: Option<Instant>,
     wipe_duration_ms: u64,
     wipe_type: i32,
+    wipe_direction: WipeDirection,
 
     start_time: Instant,
 }
@@ -495,6 +508,8 @@ fn run_gui(args: RunConfig) -> Result<()> {
                     system_extra_str_values: args.system_extra_str_values.clone(),
                     load_wipe_type: args.load_wipe_type,
                     load_wipe_time_ms: args.load_wipe_time_ms,
+                    load_after_call_scene: args.load_after_call.as_ref().map(|(s, _)| s.clone()),
+                    load_after_call_z_no: args.load_after_call.as_ref().map(|(_, z)| *z).unwrap_or(0),
                     ..siglus::vm::VmOptions::default()
                 },
                 state_in.as_ref(),

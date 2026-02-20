@@ -723,17 +723,33 @@ impl GuiApp {
             return;
         }
         let p = (elapsed_ms / duration).clamp(0.0, 1.0);
-        let ramp = if p < 0.5 { p * 2.0 } else { (1.0 - p) * 2.0 };
-        let alpha = (ramp * 220.0).clamp(0.0, 255.0) as u8;
+
+        // C++ wipe direction semantics:
+        // - Normal:    script-level wipe/mask_wipe → flash overlay (0→peak→0)
+        // - SystemIn:  TNM_WIPE_RANGE_SYSTEM_IN  → fade *from* black (opaque→transparent)
+        // - SystemOut: TNM_WIPE_RANGE_SYSTEM_OUT → fade *to* black   (transparent→opaque)
+        let ramp = match self.wipe_direction {
+            WipeDirection::SystemIn => 1.0 - p,
+            WipeDirection::SystemOut => p,
+            WipeDirection::Normal => {
+                if p < 0.5 { p * 2.0 } else { (1.0 - p) * 2.0 }
+            }
+        };
+        let alpha = (ramp * 255.0).clamp(0.0, 255.0) as u8;
         if alpha == 0 {
             return;
         }
-        let color = match self.wipe_type.rem_euclid(4) {
-            // Approximate C++ wipe families with distinct observable overlays.
-            0 => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
-            1 => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
-            2 => egui::Color32::from_rgba_premultiplied(0, 0, 64, alpha),
-            _ => egui::Color32::from_rgba_premultiplied(32, 0, 0, alpha),
+        // System wipes are always black; normal wipes use wipe_type color families.
+        let color = match self.wipe_direction {
+            WipeDirection::SystemIn | WipeDirection::SystemOut => {
+                egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha)
+            }
+            WipeDirection::Normal => match self.wipe_type.rem_euclid(4) {
+                0 => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
+                1 => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+                2 => egui::Color32::from_rgba_premultiplied(0, 0, 64, alpha),
+                _ => egui::Color32::from_rgba_premultiplied(32, 0, 0, alpha),
+            },
         };
         ui.painter().rect_filled(ui.max_rect(), 0.0, color);
     }

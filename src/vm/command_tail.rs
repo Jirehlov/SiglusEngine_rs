@@ -525,10 +525,23 @@ impl Vm {
                 return Ok(Some(false));
             }
             // -----------------------------------------------------------------
+            // Screen / Effect / Quake commands (routed through command_effect)
+            // -----------------------------------------------------------------
+            x if x == crate::elm::global::ELM_GLOBAL_SCREEN => {
+                if self.try_command_screen(&element[1..], arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                return Ok(Some(false));
+            }
+            // -----------------------------------------------------------------
             // Sound / KOE / BGM / PCM / SE / MOV stubs
             // -----------------------------------------------------------------
             x if crate::elm::global::is_sound_passthrough(x) => {
-                // Sound commands: let fall through to host.
+                // Sound commands: route through dedicated command_sound module.
+                if self.try_command_sound(element, arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                // Unhandled sub-command: fall through to host.
                 return Ok(Some(false));
             }
             x if crate::elm::global::is_koe_get_volume(x) => {

@@ -17,6 +17,7 @@ pub(super) struct RunConfig {
     pub(super) system_extra_str_values: Vec<String>,
     pub(super) load_wipe_type: i32,
     pub(super) load_wipe_time_ms: u64,
+    pub(super) load_after_call: Option<(String, i32)>,
 }
 
 fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>, Vec<String>) {
@@ -160,6 +161,8 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
     let (system_extra_int_values, system_extra_str_values) = parse_system_extra_values(&cfg);
     let (load_wipe_type, load_wipe_time_ms) = parse_load_wipe(&cfg);
 
+    let load_after_call = cfg.load_after_call.clone();
+
     Ok(RunConfig {
         gameexe,
         pck,
@@ -177,5 +180,6 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
         system_extra_str_values,
         load_wipe_type,
         load_wipe_time_ms,
+        load_after_call,
     })
 }

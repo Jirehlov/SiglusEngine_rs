@@ -174,6 +174,7 @@ impl siglus::vm::Host for GuiHost {
                 let _ = self.event_tx.send(HostEvent::StartWipe {
                     duration_ms,
                     wipe_type,
+                    wipe_direction: WipeDirection::Normal,
                 });
                 return siglus::vm::HostReturn::default();
             }
@@ -278,6 +279,7 @@ impl siglus::vm::Host for GuiHost {
         let _ = self.event_tx.send(HostEvent::StartWipe {
             duration_ms: wipe_time_ms,
             wipe_type,
+            wipe_direction: WipeDirection::SystemOut,
         });
         let started = std::time::Instant::now();
         while started.elapsed() < std::time::Duration::from_millis(wipe_time_ms) {
@@ -300,6 +302,7 @@ impl siglus::vm::Host for GuiHost {
         let _ = self.event_tx.send(HostEvent::StartWipe {
             duration_ms: wipe_time_ms,
             wipe_type,
+            wipe_direction: WipeDirection::SystemIn,
         });
         let started = std::time::Instant::now();
         while started.elapsed() < std::time::Duration::from_millis(wipe_time_ms) {
@@ -401,6 +404,13 @@ impl siglus::vm::Host for GuiHost {
         // flow_proc.cpp::tnm_game_timer_start_proc.
         // Rust has no separate game-timer proc queue yet; keep observable timer flag transition.
         info!("game_timer_move_flag <- {}", moving);
+    }
+
+    fn on_frame_action_load_after_call(&mut self, scene: &str, z_no: i32) {
+        info!(
+            "frame_action_proc: load_after_call farcall scene={} z={}",
+            scene, z_no
+        );
     }
 
     fn on_open_tweet_dialog(&mut self) {

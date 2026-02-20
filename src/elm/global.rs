@@ -241,7 +241,6 @@ pub fn is_host_passthrough_root(elm: i32) -> bool {
             || x == crate::elm::global::ELM_GLOBAL_FRONT
             || x == crate::elm::global::ELM_GLOBAL_NEXT
             || x == crate::elm::global::ELM_GLOBAL_MSGBK
-            || x == crate::elm::global::ELM_GLOBAL_SCREEN
             || x == crate::elm::global::ELM_GLOBAL_COUNTER
             || x == crate::elm::global::ELM_GLOBAL_DATABASE
             || x == crate::elm::global::ELM_GLOBAL_CGTABLE

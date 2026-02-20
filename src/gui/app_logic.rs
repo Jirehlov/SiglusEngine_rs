@@ -53,6 +53,7 @@ impl GuiApp {
             wipe_started_at: None,
             wipe_duration_ms: 0,
             wipe_type: 0,
+            wipe_direction: WipeDirection::Normal,
 
             start_time: Instant::now(),
         }
@@ -289,9 +290,11 @@ impl GuiApp {
                 HostEvent::StartWipe {
                     duration_ms,
                     wipe_type,
+                    wipe_direction,
                 } => {
                     self.wipe_duration_ms = duration_ms.max(1);
                     self.wipe_type = wipe_type;
+                    self.wipe_direction = wipe_direction;
                     self.wipe_started_at = Some(Instant::now());
                 }
             }

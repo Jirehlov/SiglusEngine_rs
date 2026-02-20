@@ -259,6 +259,10 @@ impl Vm {
             }
             x if crate::elm::syscom::is_save_or_load(x) => {
                 let slot_no = Self::slot_arg(args, 0);
+                // For load commands that go through the proc queue, we collect
+                // the proc type here and dispatch after the match (because `?`
+                // cannot be used inside a match arm that returns `bool`).
+                let mut pending_load: Option<(super::command_syscom_return::SyscomProcType, i32)> = None;
                 let ok = match x {
                     y if y == crate::elm::syscom::ELM_SYSCOM_SAVE => {
                         if let Some(slot_no) = slot_no {
@@ -288,31 +292,37 @@ impl Vm {
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_LOAD => {
-                        if let Some(slot) =
-                            slot_no.and_then(|slot_no| self.local_save_slots.get(&slot_no).cloned())
-                        {
-                            self.apply_local_state(&slot.state);
-                            true
+                        if let Some(slot_no) = slot_no {
+                            if self.local_save_slots.contains_key(&slot_no) {
+                                pending_load = Some((super::command_syscom_return::SyscomProcType::Load, slot_no));
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_QUICK_LOAD => {
-                        if let Some(slot) =
-                            slot_no.and_then(|slot_no| self.quick_save_slots.get(&slot_no).cloned())
-                        {
-                            self.apply_local_state(&slot.state);
-                            true
+                        if let Some(slot_no) = slot_no {
+                            if self.quick_save_slots.contains_key(&slot_no) {
+                                pending_load = Some((super::command_syscom_return::SyscomProcType::QuickLoad, slot_no));
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         }
                     }
                     y if y == crate::elm::syscom::ELM_SYSCOM_INNER_LOAD => {
-                        if let Some(slot) =
-                            slot_no.and_then(|slot_no| self.inner_save_slots.get(&slot_no).cloned())
-                        {
-                            self.apply_local_state(&slot.state);
-                            true
+                        if let Some(slot_no) = slot_no {
+                            if self.inner_save_slots.contains_key(&slot_no) {
+                                pending_load = Some((super::command_syscom_return::SyscomProcType::InnerLoad, slot_no));
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         }
@@ -380,6 +390,19 @@ impl Vm {
                     }
                     _ => false,
                 };
+                // Dispatch load proc queue outside the match (needs `?` propagation).
+                if let Some((proc_type, sno)) = pending_load {
+                    use super::command_syscom_return::{SyscomProc, SyscomProcType};
+                    host.on_game_timer_move(false);
+                    let queue = vec![
+                        SyscomProc { proc_type: SyscomProcType::Disp, option: 0 },
+                        SyscomProc { proc_type: SyscomProcType::GameEndWipe, option: 0 },
+                        SyscomProc { proc_type: proc_type, option: sno },
+                        SyscomProc { proc_type: SyscomProcType::GameStartWipe, option: 0 },
+                        SyscomProc { proc_type: SyscomProcType::GameTimerStart, option: 0 },
+                    ];
+                    self.run_syscom_proc_queue(&queue, provider, host)?;
+                }
                 if ret_form == crate::elm::form::INT {
                     self.stack.push_int(if ok { 1 } else { 0 });
                 }

@@ -10,7 +10,10 @@ mod command_misc;
 mod command_syscom;
 mod command_syscom_endio;
 mod command_syscom_return;
+mod command_effect;
+mod command_sound;
 mod command_tail;
+mod command_world;
 mod command_try;
 mod core;
 mod end_save_runtime;
@@ -65,6 +68,10 @@ pub struct VmOptions {
     pub system_extra_int_values: Vec<i32>,
     /// C++ tnm_ini.cpp: SYSTEM.EXTRA_STR_VALUE indexed array.
     pub system_extra_str_values: Vec<String>,
+    /// C++ tnm_ini.h: LOAD_AFTER_CALL scene name (empty / None = disabled).
+    pub load_after_call_scene: Option<String>,
+    /// C++ tnm_ini.h: LOAD_AFTER_CALL z-label index (default 0).
+    pub load_after_call_z_no: i32,
 }
 
 impl VmOptions {
@@ -90,6 +97,8 @@ impl Default for VmOptions {
             load_wipe_time_ms: 1000,
             system_extra_int_values: Vec::new(),
             system_extra_str_values: Vec::new(),
+            load_after_call_scene: None,
+            load_after_call_z_no: 0,
         }
     }
 }
