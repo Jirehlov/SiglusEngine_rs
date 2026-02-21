@@ -36,6 +36,7 @@ impl Vm {
         provider: &mut dyn SceneProvider,
         host: &mut dyn Host,
     ) -> Result<()> {
+        self.game_timer_move_flag = 0;
         for proc in queue.iter().copied() {
             match proc.proc_type {
                 SyscomProcType::Disp => {
@@ -105,6 +106,7 @@ impl Vm {
                 }
                 SyscomProcType::GameTimerStart => {
                     // C++ reference: flow_proc.cpp::tnm_game_timer_start_proc.
+                    self.game_timer_move_flag = 1;
                     host.on_game_timer_move(true);
                 }
                 SyscomProcType::EndGame => {
@@ -204,6 +206,7 @@ impl Vm {
         }
         let global_state = self.snapshot_persistent_state();
         host.on_syscom_return_to_menu_save_global(&global_state);
+        self.game_timer_move_flag = 0;
         host.on_game_timer_move(false);
         let mut proc_queue = Vec::new();
         if fade_out {
@@ -254,6 +257,7 @@ impl Vm {
             return Ok(Some(true));
         }
 
+        self.game_timer_move_flag = 0;
         host.on_game_timer_move(false);
 
         let mut proc_queue = Vec::new();
@@ -309,6 +313,7 @@ impl Vm {
             return Ok(Some(true));
         }
 
+        self.game_timer_move_flag = 0;
         host.on_game_timer_move(false);
         self.game_end_no_warning_flag = 1;
         // C++ reference: eng_syscom.cpp::tnm_syscom_end_game -> tnm_syscom_end_save(false, false).

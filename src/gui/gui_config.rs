@@ -18,6 +18,7 @@ pub(super) struct RunConfig {
     pub(super) load_wipe_type: i32,
     pub(super) load_wipe_time_ms: u64,
     pub(super) load_after_call: Option<(String, i32)>,
+    pub(super) flick_scene_routes: Vec<siglus::vm::FlickSceneRoute>,
 }
 
 fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>, Vec<String>) {
@@ -53,6 +54,46 @@ fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>,
     }
 
     (int_values, str_values)
+}
+
+fn parse_flick_scene_routes(
+    cfg: &siglus::gameexe::GameexeConfig,
+) -> Vec<siglus::vm::FlickSceneRoute> {
+    let cnt = cfg
+        .first_values("FLICK_SCENE.CNT")
+        .and_then(|v| v.first())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+
+    let mut routes = Vec::new();
+    for idx in 0..cnt {
+        let scene_key = format!("FLICK_SCENE.{idx}.SCENE");
+        let Some(values) = cfg.first_values(&scene_key) else {
+            continue;
+        };
+        let Some(scene_name) = values.first().map(|v| v.trim()).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let z_no = values
+            .get(1)
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .unwrap_or(0);
+        let angle_key = format!("FLICK_SCENE.{idx}.ANGLE");
+        let angle_type = cfg
+            .first_values(&angle_key)
+            .and_then(|v| v.first())
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .unwrap_or(0);
+        if !(1..=8).contains(&angle_type) {
+            continue;
+        }
+        routes.push(siglus::vm::FlickSceneRoute {
+            scene: scene_name.to_string(),
+            z_no,
+            angle_type,
+        });
+    }
+    routes
 }
 
 fn parse_load_wipe(cfg: &siglus::gameexe::GameexeConfig) -> (i32, u64) {
@@ -162,6 +203,7 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
     let (load_wipe_type, load_wipe_time_ms) = parse_load_wipe(&cfg);
 
     let load_after_call = cfg.load_after_call.clone();
+    let flick_scene_routes = parse_flick_scene_routes(&cfg);
 
     Ok(RunConfig {
         gameexe,
@@ -181,5 +223,6 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
         load_wipe_type,
         load_wipe_time_ms,
         load_after_call,
+        flick_scene_routes,
     })
 }

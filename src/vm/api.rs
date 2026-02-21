@@ -55,6 +55,35 @@ pub struct VmLoadFlowState {
     pub do_load_after_call_flag: bool,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VmInputButtonState {
+    pub on_down: bool,
+    pub on_up: bool,
+    pub on_down_up: bool,
+    pub is_down: bool,
+    pub is_up: bool,
+    pub on_flick: bool,
+    pub on_repeat: bool,
+    pub flick_angle: i32,
+    pub flick_pixel: i32,
+    pub flick_mm: i32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct VmFlickState {
+    pub has_flick_stock: bool,
+    pub angle_radian: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VmInputMouseState {
+    pub pos_x: i32,
+    pub pos_y: i32,
+    pub wheel_delta: i32,
+    pub left: VmInputButtonState,
+    pub right: VmInputButtonState,
+}
+
 pub trait Host {
     fn on_name(&mut self, _name: &str) {}
     fn on_text(&mut self, _text: &str, _read_flag_no: i32) {}
@@ -199,7 +228,17 @@ pub trait Host {
     fn on_break_step_line_advanced(&mut self) {}
 
     /// C++ cmd_sound.cpp: BGM play/oneshot/wait/ready.
-    fn on_bgm_play(&mut self, _name: &str, _loop_flag: bool, _wait_flag: bool, _fade_in: i32, _fade_out: i32, _start_pos: i32, _ready: bool) {}
+    fn on_bgm_play(
+        &mut self,
+        _name: &str,
+        _loop_flag: bool,
+        _wait_flag: bool,
+        _fade_in: i32,
+        _fade_out: i32,
+        _start_pos: i32,
+        _ready: bool,
+    ) {
+    }
     /// C++ cmd_sound.cpp: BGM stop.
     fn on_bgm_stop(&mut self, _fade_out: i32) {}
     /// C++ cmd_sound.cpp: BGM pause.
@@ -235,6 +274,89 @@ pub trait Host {
 
     /// Called by wait-related commands to allow host-level skip/fast-forward.
     fn should_skip_wait(&self) -> bool {
+        false
+    }
+
+    /// Wait one frame-equivalent tick for proc-based waits (KEY_WAIT/int_event/etc).
+    ///
+    /// Default keeps legacy VM single-run behavior by sleeping a short duration.
+    fn on_wait_frame(&mut self) {
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_INPUT_CLEAR (input root clear all queues).
+    fn on_input_clear(&mut self) {}
+
+    /// C++ reference: cmd_input.cpp::ELM_INPUT_NEXT (input root advance all queues).
+    fn on_input_next(&mut self) {}
+
+    /// C++ reference: cmd_input.cpp::ELM_MOUSE_CLEAR (mouse-only clear).
+    fn on_input_mouse_clear(&mut self) {
+        self.on_input_clear();
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_MOUSE_NEXT (mouse-only frame advance).
+    fn on_input_mouse_next(&mut self) {
+        self.on_input_next();
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_KEYLIST_CLEAR (keyboard-only clear).
+    fn on_input_keylist_clear(&mut self) {
+        self.on_input_clear();
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_KEYLIST_NEXT (keyboard-only frame advance).
+    fn on_input_keylist_next(&mut self) {
+        self.on_input_next();
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_KEYLIST_WAIT(_FORCE).
+    fn on_input_key_wait(&mut self, _force_skip_disable: bool) {}
+
+    /// C++ reference: cmd_input.cpp::TNM_PROC_TYPE_KEY_WAIT polling condition.
+    ///
+    /// Returns true when any key/mouse decide/cancel down-stock is pending.
+    fn on_input_key_wait_has_press_stock(&mut self) -> bool {
+        false
+    }
+
+    /// C++ reference: cmd_input.cpp::TNM_PROC_TYPE_KEY_WAIT completion path.
+    ///
+    /// Called once KEY_WAIT detects input and consumes one frame-equivalent stock.
+    fn on_input_key_wait_consume_frame(&mut self) {
+        self.on_input_next();
+    }
+
+    /// C++ reference: cmd_input.cpp::ELM_MOUSE_SET_POS.
+    fn on_input_set_mouse_pos(&mut self, _x: i32, _y: i32) {}
+
+    /// C++ reference: cmd_input.cpp::tnm_command_proc_mouse.
+    fn on_input_get_mouse_state(&mut self) -> VmInputMouseState {
+        VmInputMouseState::default()
+    }
+
+    /// C++ reference: cmd_input.cpp::tnm_command_proc_key (regular key path).
+    fn on_input_get_key_state(&mut self, _key_no: i32) -> VmInputButtonState {
+        VmInputButtonState::default()
+    }
+
+    /// C++ reference: cmd_input.cpp::tnm_command_proc_key (VK_EX_DECIDE branch).
+    fn on_input_get_decide_state(&mut self) -> VmInputButtonState {
+        VmInputButtonState::default()
+    }
+
+    /// C++ reference: cmd_input.cpp::tnm_command_proc_key (VK_EX_CANCEL branch).
+    fn on_input_get_cancel_state(&mut self) -> VmInputButtonState {
+        VmInputButtonState::default()
+    }
+
+    /// C++ reference: eng_frame.cpp flick scene branch (`mouse.left.check_flick_stock/get_flick_angle`).
+    fn on_input_get_left_flick_state(&mut self) -> VmFlickState {
+        VmFlickState::default()
+    }
+
+    /// C++ reference: eng_frame.cpp flick scene consume path (`mouse.left.use_flick_stock`).
+    fn on_input_consume_left_flick_stock(&mut self) -> bool {
         false
     }
 
@@ -294,7 +416,8 @@ pub trait Host {
         _volume_type: i32,
         _chara_no: i32,
         _ready: bool,
-    ) {}
+    ) {
+    }
 
     /// C++ cmd_sound.cpp: PCMCH stop.
     fn on_pcmch_stop(&mut self, _ch: i32, _fade: i32) {}
@@ -338,13 +461,43 @@ pub trait Host {
     // ---------------------------------------------------------------
 
     /// C++ cmd_others.cpp: int_event SET/SET_REAL.
-    fn on_int_event_set(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _realtime: i32, _value_override: Option<i32>) {}
+    fn on_int_event_set(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _realtime: i32,
+        _value_override: Option<i32>,
+    ) {
+    }
 
     /// C++ cmd_others.cpp: int_event LOOP/LOOP_REAL.
-    fn on_int_event_loop(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _count: i32, _realtime: i32) {}
+    fn on_int_event_loop(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _count: i32,
+        _realtime: i32,
+    ) {
+    }
 
     /// C++ cmd_others.cpp: int_event TURN/TURN_REAL.
-    fn on_int_event_turn(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _count: i32, _realtime: i32) {}
+    fn on_int_event_turn(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _count: i32,
+        _realtime: i32,
+    ) {
+    }
 
     /// C++ cmd_others.cpp: int_event END.
     fn on_int_event_end(&mut self, _owner_id: i32) {}
@@ -367,7 +520,14 @@ pub trait Host {
     // ---------------------------------------------------------------
 
     /// C++ cmd_object.cpp: object property set (int value).
-    fn on_object_property(&mut self, _list_id: i32, _obj_index: i32, _property_id: i32, _value: i32) {}
+    fn on_object_property(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _property_id: i32,
+        _value: i32,
+    ) {
+    }
 
     /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
     fn on_object_action(&mut self, _list_id: i32, _obj_index: i32, _sub_id: i32, _args: &[Prop]) {}

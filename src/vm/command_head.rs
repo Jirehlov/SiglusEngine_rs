@@ -2,11 +2,7 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-
-
 impl Vm {
-
-
     pub(super) fn try_command_global_head(
         &mut self,
         element: &[i32],
@@ -407,8 +403,32 @@ impl Vm {
             }
 
             _ => {
+                if element.len() == 1 {
+                    match element[0] {
+                        x if x == crate::elm::syscom::ELM_SYSCOM_SET_SYSCOM_MENU_ENABLE => {
+                            self.syscom_menu_disable_flag = 0;
+                            if ret_form == crate::elm::form::INT {
+                                self.stack.push_int(0);
+                            }
+                            return Ok(Some(true));
+                        }
+                        x if x == crate::elm::syscom::ELM_SYSCOM_SET_SYSCOM_MENU_DISABLE => {
+                            self.syscom_menu_disable_flag = 1;
+                            if ret_form == crate::elm::form::INT {
+                                self.stack.push_int(0);
+                            }
+                            return Ok(Some(true));
+                        }
+                        x if x == crate::elm::syscom::ELM_SYSCOM_INIT_SYSCOM_FLAG => {
+                            self.syscom_menu_disable_flag = 0;
+                        }
+                        _ => {}
+                    }
+                }
                 // Try syscom commands
-                if let Some(res) = self.try_command_syscom(element, _arg_list_id, args, ret_form, provider, host)? {
+                if let Some(res) =
+                    self.try_command_syscom(element, _arg_list_id, args, ret_form, provider, host)?
+                {
                     return Ok(Some(res));
                 }
             }

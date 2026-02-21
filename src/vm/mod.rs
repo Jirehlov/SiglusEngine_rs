@@ -1,31 +1,32 @@
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use crate::{dat::SceneDat, lexer::SceneLexer, stack::IfcStack};
 
 mod api;
 mod command_call;
+mod command_effect;
 mod command_head;
 mod command_input;
+mod command_int_event;
 mod command_misc;
+mod command_mwnd;
+mod command_object;
 mod command_others;
 mod command_script;
+mod command_sound;
+mod command_stage;
 mod command_syscom;
 mod command_syscom_endio;
 mod command_syscom_return;
-mod command_effect;
-mod command_int_event;
-mod command_mwnd;
-mod command_object;
-mod command_sound;
-mod command_stage;
 mod command_tail;
-mod command_world;
 mod command_try;
+mod command_world;
 mod core;
 mod end_save_runtime;
 mod end_save_state;
+mod local_state;
 mod opcode;
 mod persistent;
 mod props;
@@ -80,6 +81,15 @@ pub struct VmOptions {
     pub load_after_call_scene: Option<String>,
     /// C++ tnm_ini.h: LOAD_AFTER_CALL z-label index (default 0).
     pub load_after_call_z_no: i32,
+    /// C++ tnm_ini.cpp: FLICK_SCENE routing table.
+    pub flick_scene_routes: Vec<FlickSceneRoute>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FlickSceneRoute {
+    pub scene: String,
+    pub z_no: i32,
+    pub angle_type: i32,
 }
 
 impl VmOptions {
@@ -107,6 +117,7 @@ impl Default for VmOptions {
             system_extra_str_values: Vec::new(),
             load_after_call_scene: None,
             load_after_call_z_no: 0,
+            flick_scene_routes: Vec::new(),
         }
     }
 }
@@ -166,6 +177,12 @@ struct FrameAction {
     cmd_name: String,
     args: Vec<Prop>,
     end_action_flag: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct KeyWaitProc {
+    active: bool,
+    force_skip_disable: bool,
 }
 
 impl Default for FrameAction {
@@ -273,6 +290,7 @@ struct VmLocalState {
     user_prop_values: Vec<PropValue>,
     frame_action: FrameAction,
     frame_action_ch: Vec<FrameAction>,
+    key_wait_proc: KeyWaitProc,
     flags_a: Vec<i32>,
     flags_b: Vec<i32>,
     flags_c: Vec<i32>,
@@ -331,6 +349,8 @@ struct VmLocalState {
     system_wipe_flag: i32,
     do_frame_action_flag: i32,
     do_load_after_call_flag: i32,
+    game_timer_move_flag: i32,
+    syscom_menu_disable_flag: i32,
     last_pc: usize,
     last_line_no: i32,
     last_scene: String,
@@ -399,6 +419,7 @@ pub struct Vm {
     // FrameAction elements (headless best-effort). These are normally driven by the engine frame loop.
     frame_action: FrameAction,
     frame_action_ch: Vec<FrameAction>,
+    key_wait_proc: KeyWaitProc,
 
     // ----- Flag system (mirrors C++ Gp_flag) -----
     flags_a: Vec<i32>,
@@ -465,6 +486,8 @@ pub struct Vm {
     system_wipe_flag: i32,
     do_frame_action_flag: i32,
     do_load_after_call_flag: i32,
+    game_timer_move_flag: i32,
+    syscom_menu_disable_flag: i32,
     system_extra_int_values: Vec<i32>,
     system_extra_str_values: Vec<String>,
     return_scene_once: Option<(String, i32)>,

@@ -9,6 +9,7 @@ impl GuiApp {
         base_title: String,
         scene_size: Option<(i32, i32)>,
         audio_manager: Option<AudioManager>,
+        input_state: Arc<Mutex<SharedInputState>>,
     ) -> Self {
         Self {
             event_rx,
@@ -58,6 +59,7 @@ impl GuiApp {
 
             start_time: Instant::now(),
             audio_manager,
+            input_state,
         }
     }
 
@@ -80,6 +82,33 @@ impl GuiApp {
             screen.center().y - stage_size.y / 2.0,
         );
         (egui::Rect::from_min_size(stage_min, stage_size), fit, fit)
+    }
+
+    fn script_to_viewport_pos(&self, screen: egui::Rect, x: i32, y: i32) -> egui::Pos2 {
+        let (stage_rect, scale_x, scale_y) = self.stage_transform(screen);
+        let (sx, sy) = if let Some((sw, sh)) = self.scene_size {
+            (x.clamp(0, sw.saturating_sub(1)), y.clamp(0, sh.saturating_sub(1)))
+        } else {
+            (x.max(0), y.max(0))
+        };
+        egui::pos2(
+            stage_rect.min.x + sx as f32 * scale_x,
+            stage_rect.min.y + sy as f32 * scale_y,
+        )
+    }
+
+    fn viewport_to_script_pos(&self, screen: egui::Rect, pos: egui::Pos2) -> (i32, i32) {
+        let (stage_rect, scale_x, scale_y) = self.stage_transform(screen);
+        let local_x = ((pos.x - stage_rect.min.x) / scale_x).round() as i32;
+        let local_y = ((pos.y - stage_rect.min.y) / scale_y).round() as i32;
+        if let Some((sw, sh)) = self.scene_size {
+            (
+                local_x.clamp(0, sw.saturating_sub(1)),
+                local_y.clamp(0, sh.saturating_sub(1)),
+            )
+        } else {
+            (local_x.max(0), local_y.max(0))
+        }
     }
 
     fn init_logging() -> Result<()> {
@@ -299,6 +328,11 @@ impl GuiApp {
                     self.wipe_direction = wipe_direction;
                     self.wipe_started_at = Some(Instant::now());
                 }
+                HostEvent::SetCursorPos { x, y } => {
+                    let viewport_rect = ctx.input(|i| i.viewport_rect());
+                    let cursor = self.script_to_viewport_pos(viewport_rect, x, y);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(cursor));
+                }
                 HostEvent::PlayBgm { name, loop_flag, fade_in_ms } => {
                     if let Some(am) = &mut self.audio_manager {
                         am.play_bgm(&name, loop_flag, fade_in_ms);
@@ -367,8 +401,66 @@ impl GuiApp {
         }
     }
 
+    fn sync_input_bridge(&mut self, ctx: &egui::Context) {
+        let mut state = match self.input_state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
+            let viewport_rect = ctx.input(|i| i.viewport_rect());
+            let (script_x, script_y) = self.viewport_to_script_pos(viewport_rect, pos);
+            state.mouse_x = script_x;
+            state.mouse_y = script_y;
+        }
+        state.pixels_per_point = ctx.pixels_per_point();
+
+        let wheel = ctx.input(|i| i.raw_scroll_delta.y.round() as i32);
+        state.wheel_delta = state.wheel_delta.saturating_add(wheel);
+
+        let left_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        let right_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+        let mouse_x = state.mouse_x;
+        let mouse_y = state.mouse_y;
+        let pixels_per_point = state.pixels_per_point;
+        state
+            .mouse_left
+            .update_with_pointer(left_down, mouse_x, mouse_y, pixels_per_point);
+        state
+            .mouse_right
+            .update_with_pointer(right_down, mouse_x, mouse_y, pixels_per_point);
+
+        let decide_down = left_down
+            || ctx.input(|i| i.key_down(egui::Key::Space))
+            || ctx.input(|i| i.key_down(egui::Key::Enter));
+        let cancel_down = right_down || ctx.input(|i| i.key_down(egui::Key::Escape));
+        state.decide.update(decide_down);
+        state.cancel.update(cancel_down);
+
+        let key_map = [
+            (0x08usize, egui::Key::Backspace),
+            (0x09usize, egui::Key::Tab),
+            (0x0Dusize, egui::Key::Enter),
+            (0x1Busize, egui::Key::Escape),
+            (0x20usize, egui::Key::Space),
+            (0x21usize, egui::Key::PageUp),
+            (0x22usize, egui::Key::PageDown),
+            (0x23usize, egui::Key::End),
+            (0x24usize, egui::Key::Home),
+            (0x25usize, egui::Key::ArrowLeft),
+            (0x26usize, egui::Key::ArrowUp),
+            (0x27usize, egui::Key::ArrowRight),
+            (0x28usize, egui::Key::ArrowDown),
+            (0x2Eusize, egui::Key::Delete),
+        ];
+        for (vk, key) in key_map {
+            state.keyboard[vk].update(ctx.input(|i| i.key_down(key)));
+        }
+    }
+
     /// Handle global input: click to advance, scroll-wheel for backlog, Ctrl for skip.
     fn handle_input(&mut self, ctx: &egui::Context) {
+        self.sync_input_bridge(ctx);
         let primary_clicked = ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
         let secondary_clicked =
             ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));

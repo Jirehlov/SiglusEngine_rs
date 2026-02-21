@@ -2,7 +2,6 @@ impl siglus::vm::Host for GuiHost {
     fn on_name(&mut self, name: &str) {
         let _ = self.event_tx.send(HostEvent::Name(name.to_string()));
     }
-
     fn on_text(&mut self, text: &str, _read_flag_no: i32) {
         let _ = self.event_tx.send(HostEvent::Text {
             text: text.to_string(),
@@ -32,7 +31,6 @@ impl siglus::vm::Host for GuiHost {
             }
         }
     }
-
     fn on_command(
         &mut self,
         element: &[i32],
@@ -182,19 +180,15 @@ impl siglus::vm::Host for GuiHost {
 
         siglus::vm::HostReturn::default()
     }
-
     fn on_property(&mut self, _element: &[i32]) -> siglus::vm::HostReturn {
         siglus::vm::HostReturn::default()
     }
-
     fn on_assign(&mut self, element: &[i32], _al_id: i32, rhs: &siglus::vm::Prop) {
         if let Some((plane, object_index, prop)) = parse_stage_object_prop(element) {
             self.apply_object_assign(plane, object_index, prop, rhs);
         }
     }
-
     fn on_trace(&mut self, _msg: &str) {}
-
     fn on_error(&mut self, msg: &str) {
         // Log error to file instead of showing in UI
         error!("VM Error: {}", msg);
@@ -202,8 +196,6 @@ impl siglus::vm::Host for GuiHost {
         // but for now let's just log it. The user specifically asked to remove on-screen error.
         // let _ = self.event_tx.send(HostEvent::Error(msg.to_string()));
     }
-
-
     fn on_script_fatal(&mut self, msg: &str) {
         // C++ flow_script.cpp fatal path pushes TNM_PROC_TYPE_NONE and stops script flow.
         // GUI host maps this to worker shutdown to stop VM loop deterministically.
@@ -218,15 +210,21 @@ impl siglus::vm::Host for GuiHost {
     fn should_skip_wait(&self) -> bool {
         self.skip_mode.load(Ordering::Relaxed)
     }
-
+    fn on_wait_frame(&mut self) {
+        if self.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    include!("host_impl_input.rs");
     fn on_msg_back_state(&mut self, open: bool) {
         let _ = self.event_tx.send(HostEvent::MsgBackState(open));
     }
-
     fn on_msg_back_display(&mut self, enabled: bool) {
-        let _ = self.event_tx.send(HostEvent::MsgBackDisplayEnabled(enabled));
+        let _ = self
+            .event_tx
+            .send(HostEvent::MsgBackDisplayEnabled(enabled));
     }
-
     fn on_syscom_return_to_menu_warning(&mut self) -> bool {
         // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu warning branch.
         // Block VM until GUI returns YES/NO equivalent.
@@ -245,37 +243,35 @@ impl siglus::vm::Host for GuiHost {
             }
         }
     }
-
     fn on_syscom_return_to_sel_warning(&mut self) -> bool {
         // TODO(C++: eng_syscom.cpp::tnm_syscom_return_to_sel warning branch)
         // Missing reason: GUI currently only has dedicated return_to_menu warning dialog wiring.
         // Expected behavior: dedicated warning text + YES/NO path for return_to_sel.
         true
     }
-
     fn on_syscom_end_game_warning(&mut self) -> bool {
         // TODO(C++: eng_syscom.cpp::tnm_syscom_end_game warning branch)
         // Missing reason: GUI currently only has dedicated return_to_menu warning dialog wiring.
         // Expected behavior: dedicated warning text + YES/NO path for end_game.
         true
     }
-
     fn on_syscom_play_se(&mut self, kind: i32) {
         // STUB(C++: eng_syscom.cpp syscom SE types: MENU/PREV_SEL/END_GAME)
         // Missing reason: Rust GUI host has no menu/syscom SE playback path yet.
         // Expected behavior: play corresponding SE once when each syscom command is confirmed.
         info!("syscom requested se kind={} (stub)", kind);
     }
-
     fn on_syscom_proc_disp(&mut self) {
         // C++ reference: eng_syscom.cpp fade-out branches push TNM_PROC_TYPE_DISP.
         info!("syscom DISP proc");
     }
-
     fn on_syscom_proc_game_end_wipe(&mut self, wipe_type: i32, wipe_time_ms: u64) {
         // C++ reference: flow_proc.cpp::tnm_game_end_wipe_proc.
         let wipe_time_ms = wipe_time_ms.max(1);
-        info!("syscom game_end_wipe wipe_type={} wipe_time_ms={}", wipe_type, wipe_time_ms);
+        info!(
+            "syscom game_end_wipe wipe_type={} wipe_time_ms={}",
+            wipe_type, wipe_time_ms
+        );
         let _ = self.event_tx.send(HostEvent::StartWipe {
             duration_ms: wipe_time_ms,
             wipe_type,
@@ -289,7 +285,6 @@ impl siglus::vm::Host for GuiHost {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
-
     fn on_syscom_proc_game_start_wipe(&mut self, wipe_type: i32, wipe_time_ms: u64) {
         // TODO(C++: flow_proc.cpp::tnm_game_start_wipe_proc)
         // Missing reason: start/end wipe ranges are not separated in current renderer path.
@@ -312,26 +307,22 @@ impl siglus::vm::Host for GuiHost {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
-
     fn on_syscom_proc_return_to_sel(&mut self) {
         // TODO(C++: flow_proc.cpp::tnm_return_to_sel_proc -> saveload return path)
         // Missing reason: Rust VM currently restores sel snapshot best-effort without dedicated scene transition event.
         info!("syscom return_to_sel proc");
     }
-
     fn on_syscom_proc_end_game(&mut self) {
         // TODO(C++: flow_proc.cpp::tnm_end_game_proc)
         // Missing reason: GUI host lacks dedicated global game-end state pipeline.
         // Expected behavior: set game_end flags and trigger application-level termination flow.
         info!("syscom end_game proc");
     }
-
     fn on_syscom_proc_end_load_result(&mut self, ok: bool) {
         // C++ reference: flow_proc.cpp::tnm_end_load_proc invokes tnm_saveload_proc_end_load(),
         // but proc queue continues regardless; host can still observe actual restore success/failure.
         info!("syscom end_load restore result <- {}", ok);
     }
-
     fn on_syscom_load_flow_state(&mut self, state: siglus::vm::VmLoadFlowState) {
         // C++ reference: flow_proc.cpp load/return proc family updates these global flags,
         // consumed later by eng_frame.cpp::frame_action_proc.
@@ -340,23 +331,24 @@ impl siglus::vm::Host for GuiHost {
             state.system_wipe_flag, state.do_frame_action_flag, state.do_load_after_call_flag
         );
     }
-
     fn on_syscom_end_save_snapshot(&mut self, slot_no: i32, state: &siglus::vm::VmEndSaveState) {
         let path = self
             .persistent_state_path
             .with_file_name(format!("siglus_end_save_{slot_no}.bin"));
         if let Err(e) = save_end_save_state(&path, state) {
-            error!("syscom end_save snapshot flush failed ({}): {:#}", path.display(), e);
+            error!(
+                "syscom end_save snapshot flush failed ({}): {:#}",
+                path.display(),
+                e
+            );
         }
     }
-
     fn on_syscom_end_save_exist(&mut self, slot_no: i32) -> Option<bool> {
         let path = self
             .persistent_state_path
             .with_file_name(format!("siglus_end_save_{slot_no}.bin"));
         Some(path.exists())
     }
-
     fn on_syscom_end_load_snapshot(&mut self, slot_no: i32) -> Option<siglus::vm::VmEndSaveState> {
         let path = self
             .persistent_state_path
@@ -364,7 +356,11 @@ impl siglus::vm::Host for GuiHost {
         match load_end_save_state(&path) {
             Ok(v) => v,
             Err(e) => {
-                error!("syscom end_load snapshot read failed ({}): {:#}", path.display(), e);
+                error!(
+                    "syscom end_load snapshot read failed ({}): {:#}",
+                    path.display(),
+                    e
+                );
                 None
             }
         }
@@ -386,7 +382,6 @@ impl siglus::vm::Host for GuiHost {
             );
         }
     }
-
     fn on_syscom_return_to_menu_save_global(&mut self, state: &siglus::vm::VmPersistentState) {
         // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu -> tnm_save_global_on_file().
         // Rust path: flush VM persistent snapshot immediately at return_to_menu trigger time.
@@ -398,28 +393,24 @@ impl siglus::vm::Host for GuiHost {
             );
         }
     }
-
     fn on_game_timer_move(&mut self, moving: bool) {
         // C++ reference: eng_syscom.cpp::tnm_syscom_return_to_menu +
         // flow_proc.cpp::tnm_game_timer_start_proc.
         // Rust has no separate game-timer proc queue yet; keep observable timer flag transition.
         info!("game_timer_move_flag <- {}", moving);
     }
-
     fn on_frame_action_load_after_call(&mut self, scene: &str, z_no: i32) {
         info!(
             "frame_action_proc: load_after_call farcall scene={} z={}",
             scene, z_no
         );
     }
-
     fn on_open_tweet_dialog(&mut self) {
         // C++ reference: cmd_syscom.cpp::ELM_SYSCOM_OPEN_TWEET_DIALOG -> tnm_twitter_start().
         // Rust currently opens a minimal placeholder dialog (no real tweet/upload pipeline yet).
         info!("syscom open_tweet_dialog requested (opening placeholder dialog)");
         let _ = self.event_tx.send(HostEvent::OpenTweetDialog);
     }
-
     fn on_location(&mut self, scene_title: &str, scene: &str, line_no: i32) {
         let _ = self.event_tx.send(HostEvent::Location {
             scene_title: scene_title.to_string(),
@@ -427,21 +418,41 @@ impl siglus::vm::Host for GuiHost {
             line_no,
         });
     }
-
-    fn on_bgm_play(&mut self, name: &str, loop_flag: bool, _wait_flag: bool, fade_in: i32, _fade_out: i32, _start_pos: i32, _ready: bool) {
-        let _ = self.event_tx.send(HostEvent::PlayBgm { name: name.to_string(), loop_flag, fade_in_ms: fade_in });
+    fn on_bgm_play(
+        &mut self,
+        name: &str,
+        loop_flag: bool,
+        _wait_flag: bool,
+        fade_in: i32,
+        _fade_out: i32,
+        _start_pos: i32,
+        _ready: bool,
+    ) {
+        let _ = self.event_tx.send(HostEvent::PlayBgm {
+            name: name.to_string(),
+            loop_flag,
+            fade_in_ms: fade_in,
+        });
     }
     fn on_bgm_stop(&mut self, fade_out: i32) {
-        let _ = self.event_tx.send(HostEvent::StopBgm { fade_out_ms: fade_out });
+        let _ = self.event_tx.send(HostEvent::StopBgm {
+            fade_out_ms: fade_out,
+        });
     }
     fn on_pcm_play(&mut self, name: &str) {
-        let _ = self.event_tx.send(HostEvent::PlayPcm { ch: 0, name: name.to_string(), loop_flag: false });
+        let _ = self.event_tx.send(HostEvent::PlayPcm {
+            ch: 0,
+            name: name.to_string(),
+            loop_flag: false,
+        });
     }
     fn on_pcm_stop(&mut self) {
         let _ = self.event_tx.send(HostEvent::StopPcm { ch: 0 });
     }
     fn on_se_play(&mut self, _id: i32, name: &str) {
-        let _ = self.event_tx.send(HostEvent::PlaySe { name: name.to_string() });
+        let _ = self.event_tx.send(HostEvent::PlaySe {
+            name: name.to_string(),
+        });
     }
     fn on_se_stop(&mut self, _fade: i32) {
         let _ = self.event_tx.send(HostEvent::StopSe);
@@ -457,53 +468,87 @@ impl siglus::vm::Host for GuiHost {
         _chara_no: i32,
         _ready: bool,
     ) {
-        let _ = self.event_tx.send(HostEvent::PlayPcm { ch, name: name.to_string(), loop_flag });
+        let _ = self.event_tx.send(HostEvent::PlayPcm {
+            ch,
+            name: name.to_string(),
+            loop_flag,
+        });
     }
     fn on_pcmch_stop(&mut self, ch: i32, _fade: i32) {
         let _ = self.event_tx.send(HostEvent::StopPcm { ch });
     }
-
-    fn on_int_event_set(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, realtime: i32, value_override: Option<i32>) {
+    fn on_int_event_set(
+        &mut self,
+        owner_id: i32,
+        start: i32,
+        end: i32,
+        time: i32,
+        _delay: i32,
+        realtime: i32,
+        value_override: Option<i32>,
+    ) {
         let actual_start = value_override.unwrap_or(start);
         if time <= 0 {
             self.int_events.remove(&owner_id);
         } else {
             let duration_ms = if realtime > 0 { time } else { time * 16 };
-            self.int_events.insert(owner_id, IntEventState {
-                start_val: actual_start,
-                end_val: end,
-                duration_ms,
-                started_at: std::time::Instant::now(),
-            });
+            self.int_events.insert(
+                owner_id,
+                IntEventState {
+                    start_val: actual_start,
+                    end_val: end,
+                    duration_ms,
+                    started_at: std::time::Instant::now(),
+                },
+            );
         }
     }
-
-    fn on_int_event_loop(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, _count: i32, realtime: i32) {
+    fn on_int_event_loop(
+        &mut self,
+        owner_id: i32,
+        start: i32,
+        end: i32,
+        time: i32,
+        _delay: i32,
+        _count: i32,
+        realtime: i32,
+    ) {
         let duration_ms = if realtime > 0 { time } else { time * 16 };
-        self.int_events.insert(owner_id, IntEventState {
-            start_val: start,
-            end_val: end,
-            duration_ms: duration_ms.max(1),
-            started_at: std::time::Instant::now(),
-        });
+        self.int_events.insert(
+            owner_id,
+            IntEventState {
+                start_val: start,
+                end_val: end,
+                duration_ms: duration_ms.max(1),
+                started_at: std::time::Instant::now(),
+            },
+        );
     }
-
-    fn on_int_event_turn(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, _count: i32, realtime: i32) {
+    fn on_int_event_turn(
+        &mut self,
+        owner_id: i32,
+        start: i32,
+        end: i32,
+        time: i32,
+        _delay: i32,
+        _count: i32,
+        realtime: i32,
+    ) {
         let duration_ms = if realtime > 0 { time } else { time * 16 };
-        self.int_events.insert(owner_id, IntEventState {
-            start_val: start,
-            end_val: end,
-            duration_ms: duration_ms.max(1),
-            started_at: std::time::Instant::now(),
-        });
+        self.int_events.insert(
+            owner_id,
+            IntEventState {
+                start_val: start,
+                end_val: end,
+                duration_ms: duration_ms.max(1),
+                started_at: std::time::Instant::now(),
+            },
+        );
     }
-
     fn on_int_event_end(&mut self, owner_id: i32) {
         self.int_events.remove(&owner_id);
     }
-
     fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
-
     fn on_int_event_check(&mut self, owner_id: i32) -> bool {
         if let Some(state) = self.int_events.get(&owner_id) {
             state.started_at.elapsed().as_millis() < state.duration_ms as u128
@@ -511,7 +556,6 @@ impl siglus::vm::Host for GuiHost {
             false
         }
     }
-
     fn on_int_event_get_value(&mut self, owner_id: i32) -> i32 {
         if let Some(state) = self.int_events.get(&owner_id) {
             let elapsed = state.started_at.elapsed().as_millis() as i32;

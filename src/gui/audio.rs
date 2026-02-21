@@ -1,10 +1,10 @@
 use anyhow::Result;
+use log::{error, info, warn};
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use log::{error, info, warn};
+use std::path::PathBuf;
 
 pub struct AudioManager {
     _stream: OutputStream,
@@ -40,14 +40,15 @@ impl AudioManager {
                 if p.exists() {
                     return Some(p);
                 }
-                
+
                 // try lowercase if exact doesn't match
                 let lower_name = name.to_lowercase();
                 let p_lower = if dir.is_empty() {
                     self.base_dir.clone()
                 } else {
                     self.base_dir.join(dir)
-                }.join(format!("{}.{}", lower_name, ext));
+                }
+                .join(format!("{}.{}", lower_name, ext));
                 if p_lower.exists() {
                     return Some(p_lower);
                 }

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
@@ -16,13 +16,15 @@ mod gui_config;
 mod stage;
 
 use gui_assets::*;
-use gui_config::{RunConfig, load_run_config};
+use gui_config::{load_run_config, RunConfig};
 use stage::{
     is_visual_or_flow_command, looks_like_stage_object_path, parse_stage_object_command,
     parse_stage_object_prop, parse_stage_plane_command, summarize_props,
 };
 mod audio;
+mod input_bridge;
 use audio::AudioManager;
+use input_bridge::*;
 
 const DEFAULT_GAMEEXE_NAME: &str = "Gameexe.dat";
 
@@ -155,6 +157,10 @@ enum HostEvent {
         wipe_type: i32,
         wipe_direction: WipeDirection,
     },
+    SetCursorPos {
+        x: i32,
+        y: i32,
+    },
     PlayBgm {
         name: String,
         loop_flag: bool,
@@ -276,6 +282,7 @@ struct GuiHost {
     objects: BTreeMap<(StagePlane, i32), HostObjectState>,
     next_object_seq: u64,
     int_events: std::collections::HashMap<i32, IntEventState>,
+    input_state: Arc<Mutex<SharedInputState>>,
 }
 
 const IMAGE_EXT_CANDIDATES: [&str; 5] = ["g00", "bmp", "png", "jpg", "dds"];
@@ -345,6 +352,7 @@ struct GuiApp {
 
     start_time: Instant,
     audio_manager: Option<AudioManager>,
+    input_state: Arc<Mutex<SharedInputState>>,
 }
 
 include!("app_logic.rs");
@@ -478,7 +486,6 @@ fn save_end_save_state(path: &Path, state: &siglus::vm::VmEndSaveState) -> Resul
         .with_context(|| format!("failed to write end-save state: {}", path.display()))
 }
 
-
 fn run_gui(args: RunConfig) -> Result<()> {
     // Initialize logging
     if let Err(e) = GuiApp::init_logging() {
@@ -492,12 +499,18 @@ fn run_gui(args: RunConfig) -> Result<()> {
     let (advance_tx, advance_rx) = mpsc::channel::<AdvanceSignal>();
     let skip_mode = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
+    let input_state = Arc::new(Mutex::new(SharedInputState::default()));
 
     let worker_event_tx = event_tx.clone();
     let worker_skip = skip_mode.clone();
     let worker_shutdown = shutdown.clone();
+    let worker_input_state = input_state.clone();
 
-    let base_dir = args.pck.parent().unwrap_or(&PathBuf::from(".")).to_path_buf();
+    let base_dir = args
+        .pck
+        .parent()
+        .unwrap_or(&PathBuf::from("."))
+        .to_path_buf();
     let audio_manager = audio::AudioManager::new(base_dir).ok();
 
     let _worker = thread::spawn(move || {
@@ -523,6 +536,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 objects: BTreeMap::new(),
                 next_object_seq: 1,
                 int_events: std::collections::HashMap::new(),
+                input_state: worker_input_state,
             };
 
             let state_in = match load_persistent_state(&args.persistent_state_path) {
@@ -545,7 +559,12 @@ fn run_gui(args: RunConfig) -> Result<()> {
                     load_wipe_type: args.load_wipe_type,
                     load_wipe_time_ms: args.load_wipe_time_ms,
                     load_after_call_scene: args.load_after_call.as_ref().map(|(s, _)| s.clone()),
-                    load_after_call_z_no: args.load_after_call.as_ref().map(|(_, z)| *z).unwrap_or(0),
+                    load_after_call_z_no: args
+                        .load_after_call
+                        .as_ref()
+                        .map(|(_, z)| *z)
+                        .unwrap_or(0),
+                    flick_scene_routes: args.flick_scene_routes.clone(),
                     ..siglus::vm::VmOptions::default()
                 },
                 state_in.as_ref(),
@@ -579,6 +598,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
         args.title.clone(),
         args.scene_size,
         audio_manager,
+        input_state,
     );
 
     let mut native_options = eframe::NativeOptions::default();
