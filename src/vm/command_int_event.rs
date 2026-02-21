@@ -111,15 +111,14 @@ impl Vm {
             // --- check ---
             ELM_INTEVENT_CHECK => {
                 // C++ tnm_stack_push_int(p_int_event->check_event() ? 1 : 0)
-                // Without actual event state, push 0 (not active).
-                self.stack.push_int(0);
+                self.stack.push_int(if host.on_int_event_check(owner_id) { 1 } else { 0 });
                 true
             }
 
             // --- get_event_value ---
             ELM_INTEVENT_GET_EVENT_VALUE => {
                 // C++ tnm_stack_push_int(p_int_event->get_event_value())
-                self.stack.push_int(0);
+                self.stack.push_int(host.on_int_event_get_value(owner_id));
                 true
             }
 

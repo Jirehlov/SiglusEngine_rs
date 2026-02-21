@@ -21,6 +21,8 @@ use stage::{
     is_visual_or_flow_command, looks_like_stage_object_path, parse_stage_object_command,
     parse_stage_object_prop, parse_stage_plane_command, summarize_props,
 };
+mod audio;
+use audio::AudioManager;
 
 const DEFAULT_GAMEEXE_NAME: &str = "Gameexe.dat";
 
@@ -153,6 +155,26 @@ enum HostEvent {
         wipe_type: i32,
         wipe_direction: WipeDirection,
     },
+    PlayBgm {
+        name: String,
+        loop_flag: bool,
+        fade_in_ms: i32,
+    },
+    StopBgm {
+        fade_out_ms: i32,
+    },
+    PlaySe {
+        name: String,
+    },
+    StopSe,
+    PlayPcm {
+        ch: i32,
+        name: String,
+        loop_flag: bool,
+    },
+    StopPcm {
+        ch: i32,
+    },
     Done,
 }
 
@@ -231,6 +253,14 @@ struct ObjectRenderState {
     src_clip_bottom: f32,
 }
 
+#[derive(Debug, Clone)]
+struct IntEventState {
+    start_val: i32,
+    end_val: i32,
+    duration_ms: i32,
+    started_at: Instant,
+}
+
 // ── VM Host implementation ──────────────────────────────────────────────
 
 struct GuiHost {
@@ -245,6 +275,7 @@ struct GuiHost {
     persistent_state_path: PathBuf,
     objects: BTreeMap<(StagePlane, i32), HostObjectState>,
     next_object_seq: u64,
+    int_events: std::collections::HashMap<i32, IntEventState>,
 }
 
 const IMAGE_EXT_CANDIDATES: [&str; 5] = ["g00", "bmp", "png", "jpg", "dds"];
@@ -313,6 +344,7 @@ struct GuiApp {
     wipe_direction: WipeDirection,
 
     start_time: Instant,
+    audio_manager: Option<AudioManager>,
 }
 
 include!("app_logic.rs");
@@ -465,6 +497,9 @@ fn run_gui(args: RunConfig) -> Result<()> {
     let worker_skip = skip_mode.clone();
     let worker_shutdown = shutdown.clone();
 
+    let base_dir = args.pck.parent().unwrap_or(&PathBuf::from(".")).to_path_buf();
+    let audio_manager = audio::AudioManager::new(base_dir).ok();
+
     let _worker = thread::spawn(move || {
         let run = || -> Result<u64> {
             let pack = siglus::pck::read_file(&args.pck)
@@ -487,6 +522,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 persistent_state_path: args.persistent_state_path.clone(),
                 objects: BTreeMap::new(),
                 next_object_seq: 1,
+                int_events: std::collections::HashMap::new(),
             };
 
             let state_in = match load_persistent_state(&args.persistent_state_path) {
@@ -542,6 +578,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
         shutdown.clone(),
         args.title.clone(),
         args.scene_size,
+        audio_manager,
     );
 
     let mut native_options = eframe::NativeOptions::default();

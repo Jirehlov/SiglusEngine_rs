@@ -107,7 +107,7 @@ impl Vm {
             }
             ELM_MWND_CHECK_OPEN => {
                 // C++ tnm_stack_push_int(p_mwnd->get_window_appear_flag() ? 1 : 0)
-                self.stack.push_int(0);
+                self.stack.push_int(host.on_mwnd_get(sub));
                 true
             }
             ELM_MWND_CLOSE | ELM_MWND_CLOSE_WAIT | ELM_MWND_CLOSE_NOWAIT | ELM_MWND_END_CLOSE => {
@@ -197,7 +197,7 @@ impl Vm {
             // --- Layer / World ---
             ELM_MWND_LAYER | ELM_MWND_WORLD => {
                 if arg_list_id == 0 {
-                    self.stack.push_int(0); // get
+                    self.stack.push_int(host.on_mwnd_get(sub)); // get
                 } else {
                     host.on_mwnd_action(sub, args);
                 }
@@ -206,7 +206,7 @@ impl Vm {
 
             // --- Sub-object lists (button, face, object) → delegate to object_list ---
             ELM_MWND_BUTTON | ELM_MWND_FACE | ELM_MWND_OBJECT => {
-                self.try_command_object_list(&element[1..], arg_list_id, args, ret_form, host)
+                self.try_command_object_list(sub, &element[1..], arg_list_id, args, ret_form, host)
             }
 
             // --- Window position / size / moji_cnt ---
@@ -218,7 +218,7 @@ impl Vm {
             ELM_MWND_GET_WINDOW_POS_X | ELM_MWND_GET_WINDOW_POS_Y
             | ELM_MWND_GET_WINDOW_SIZE_X | ELM_MWND_GET_WINDOW_SIZE_Y
             | ELM_MWND_GET_WINDOW_MOJI_CNT_X | ELM_MWND_GET_WINDOW_MOJI_CNT_Y => {
-                self.stack.push_int(0);
+                self.stack.push_int(host.on_mwnd_get(sub));
                 true
             }
 
@@ -234,7 +234,7 @@ impl Vm {
             | ELM_MWND_GET_CLOSE_ANIME_TYPE | ELM_MWND_GET_CLOSE_ANIME_TIME
             | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TYPE | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TIME
             | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TYPE | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TIME => {
-                self.stack.push_int(0);
+                self.stack.push_int(host.on_mwnd_get(sub));
                 true
             }
 

@@ -75,22 +75,17 @@
 ## 4) 本轮交接（Iteration Handoff）
 
 ### 本轮完成
-- 新增 `src/vm/command_int_event.rs`：通用 int_event/int_event_list 子路由，对齐 C++ `cmd_others.cpp` `tnm_command_proc_int_event` / `tnm_command_proc_int_event_list`。覆盖 SET/SET_REAL/LOOP/LOOP_REAL/TURN/TURN_REAL/END/WAIT/WAIT_KEY/CHECK/GET_EVENT_VALUE/YURE 等全部子命令。支持 named-arg value override。
-- 新增 `src/vm/command_object.rs`：完整 object 子分发器，对齐 C++ `cmd_object.cpp`。包含 `try_command_object_list`（array 分发/resize/get_size）、`try_command_object`（~50 个属性 get/set、~30 个 `*_EVE` 属性 → int_event 子路由、ALL_EVE end/wait/check、create/init/free 生命周期、movie/emote/button/weather/GAN/hints/child 等高级命令完整路由）。
-- 新增 `src/vm/command_mwnd.rs`：完整 mwnd 子分发器，对齐 C++ `cmd_mwnd.cpp`。包含 `try_command_mwnd_list`（close_all 变体/array 分发）、`try_command_mwnd`（~60 个子命令：open/close、waku/filter、message/print/ruby/indent/slide、sel/selmsg、koe/exkoe、face、layer/world、window pos/size/moji_cnt、animation type/time、sub-object button/face/object → object_list）。
-- `command_stage.rs` 中 OBJECT 和 MWND 从 host passthrough 改为 VM 侧路由（调用 `try_command_object_list` / `try_command_mwnd_list`）。
-- `command_effect.rs` 和 `command_world.rs` 中所有 `*_EVE` 属性从 bare accept 改为 int_event 子路由（`try_command_int_event`）。
-- `api.rs` Host trait 新增 8 个回调：`on_int_event_set/loop/turn/end/wait`（int_event 5 个）+ `on_object_property/on_object_action`（object 2 个）+ `on_mwnd_action`（mwnd 1 个），均有默认 no-op 实现。
-- `mod.rs` 注册 `command_int_event`、`command_object`、`command_mwnd` 三个模块。
-- `cargo check` 通过，无 error 无 warning。
+- 接入真实音频后端 (`rodio`)，在 `audio.rs` 下建立 `AudioManager`，给 `Host` API 赋予了能正确挂载和追踪 `BGM`/`SE`/`PCMCH` 的流媒体播放及停止能力，动态寻路至 `.ogg`、`.wav` 或 `.mp3` 音频文件。
+- 实现 GUI 级别对象尺寸状态反馈机制。将 `on_object_get`、`on_mwnd_get` 方法添加进了 `api.rs` 并使其实际能被查询指令（如 `ELM_OBJECT_GET_SIZE_X`，`ELM_MWND_CHECK_OPEN`）触发。
+- 构建核心事件状态插值追踪结构。在 GUI Host 中追踪含有目标时间预定义的 `int_event`。实现了利用宿主实时 `elapsed` 的内部帧同步校验回调 `on_int_event_check`，并利用差值在 `on_int_event_get_value` 里准确实现真实线性映射的值返回 (Linear Interpolation)。
+- 解决在宿主线程之间跨越共享借用变量的各种所有权限制跟编译器排斥。无警告编译及跨越音频启动通过。
 
 ### 未完成 / 阻塞
-- Host 侧所有新回调均为 no-op stub，无真实渲染/音频/动画效果。
-- int_event 子路由 check/get_event_value 返回硬编码 0（无实际 event state tracking）。
-- Object/Mwnd 查询命令（get_size_x/y/z, get_pixel_color_*, get_file_name, check_open, get_window_pos_* 等）返回硬编码默认值。
+- Host 侧的实际界面贴图渲染、滤镜绘制、字体及窗口 GUI 尚不齐备。很多查询操作虽有对应响应，但是获取的多数还是假数据（尚未完全与 `egui` 画布的数据模型绑定）。
+- 当前通过 `sleep_loop` 或线程阻塞处理长延迟的同步事件存在响应性瓶颈（等待异步调度引擎改造）。
 
 ### 下一轮首要任务（可直接执行）
-1. 接入真实音频后端（rodio / cpal），让 BGM/SE/PCM/PCMCH Host 回调实际播放音频。
-2. 对象/mwnd 状态追踪（在 GUI host 侧实现基础 object state，使 get_* 查询返回真实值）。
-3. int_event state tracking（让 check/get_event_value 返回真实动画进度）。
+1. `Input` 子系统中对光标按键及 `joy` (`keylist`) 状态的高级接管路由。
+2. 充实 `GuiApp` 原有的基础 `egui` 侧绘制，把 `on_object_action` 的渲染结果真正在屏幕中实装位移和放缩等效果。
+3. `cmd_syscom.cpp` 大量悬空配置菜单读写及存档行为的映射接入。
 

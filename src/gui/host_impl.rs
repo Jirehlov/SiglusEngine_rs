@@ -427,6 +427,103 @@ impl siglus::vm::Host for GuiHost {
             line_no,
         });
     }
+
+    fn on_bgm_play(&mut self, name: &str, loop_flag: bool, _wait_flag: bool, fade_in: i32, _fade_out: i32, _start_pos: i32, _ready: bool) {
+        let _ = self.event_tx.send(HostEvent::PlayBgm { name: name.to_string(), loop_flag, fade_in_ms: fade_in });
+    }
+    fn on_bgm_stop(&mut self, fade_out: i32) {
+        let _ = self.event_tx.send(HostEvent::StopBgm { fade_out_ms: fade_out });
+    }
+    fn on_pcm_play(&mut self, name: &str) {
+        let _ = self.event_tx.send(HostEvent::PlayPcm { ch: 0, name: name.to_string(), loop_flag: false });
+    }
+    fn on_pcm_stop(&mut self) {
+        let _ = self.event_tx.send(HostEvent::StopPcm { ch: 0 });
+    }
+    fn on_se_play(&mut self, _id: i32, name: &str) {
+        let _ = self.event_tx.send(HostEvent::PlaySe { name: name.to_string() });
+    }
+    fn on_se_stop(&mut self, _fade: i32) {
+        let _ = self.event_tx.send(HostEvent::StopSe);
+    }
+    fn on_pcmch_play(
+        &mut self,
+        ch: i32,
+        name: &str,
+        loop_flag: bool,
+        _wait_flag: bool,
+        _fade_in: i32,
+        _volume_type: i32,
+        _chara_no: i32,
+        _ready: bool,
+    ) {
+        let _ = self.event_tx.send(HostEvent::PlayPcm { ch, name: name.to_string(), loop_flag });
+    }
+    fn on_pcmch_stop(&mut self, ch: i32, _fade: i32) {
+        let _ = self.event_tx.send(HostEvent::StopPcm { ch });
+    }
+
+    fn on_int_event_set(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, realtime: i32, value_override: Option<i32>) {
+        let actual_start = value_override.unwrap_or(start);
+        if time <= 0 {
+            self.int_events.remove(&owner_id);
+        } else {
+            let duration_ms = if realtime > 0 { time } else { time * 16 };
+            self.int_events.insert(owner_id, IntEventState {
+                start_val: actual_start,
+                end_val: end,
+                duration_ms,
+                started_at: std::time::Instant::now(),
+            });
+        }
+    }
+
+    fn on_int_event_loop(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, _count: i32, realtime: i32) {
+        let duration_ms = if realtime > 0 { time } else { time * 16 };
+        self.int_events.insert(owner_id, IntEventState {
+            start_val: start,
+            end_val: end,
+            duration_ms: duration_ms.max(1),
+            started_at: std::time::Instant::now(),
+        });
+    }
+
+    fn on_int_event_turn(&mut self, owner_id: i32, start: i32, end: i32, time: i32, _delay: i32, _count: i32, realtime: i32) {
+        let duration_ms = if realtime > 0 { time } else { time * 16 };
+        self.int_events.insert(owner_id, IntEventState {
+            start_val: start,
+            end_val: end,
+            duration_ms: duration_ms.max(1),
+            started_at: std::time::Instant::now(),
+        });
+    }
+
+    fn on_int_event_end(&mut self, owner_id: i32) {
+        self.int_events.remove(&owner_id);
+    }
+
+    fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
+
+    fn on_int_event_check(&mut self, owner_id: i32) -> bool {
+        if let Some(state) = self.int_events.get(&owner_id) {
+            state.started_at.elapsed().as_millis() < state.duration_ms as u128
+        } else {
+            false
+        }
+    }
+
+    fn on_int_event_get_value(&mut self, owner_id: i32) -> i32 {
+        if let Some(state) = self.int_events.get(&owner_id) {
+            let elapsed = state.started_at.elapsed().as_millis() as i32;
+            if elapsed >= state.duration_ms {
+                return state.end_val;
+            }
+            let progress = elapsed as f32 / state.duration_ms as f32;
+            state.start_val + ((state.end_val - state.start_val) as f32 * progress) as i32
+        } else {
+            0
+        }
+    }
 }
 
 fn parse_wipe_type_from_cpp(elm: i32, args: &[siglus::vm::Prop]) -> i32 {

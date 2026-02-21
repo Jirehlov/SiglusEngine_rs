@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+rodio = { version = "0.19", default-features = false, features = ["vorbis", "wav", "flac", "mp3"] }
 encoding_rs = "0.8"
 anyhow = "1"
 widestring = "1"

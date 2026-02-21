@@ -80,7 +80,7 @@ impl Vm {
         match sub {
             // Object list — VM-side routing via command_object module.
             ELM_STAGE_OBJECT => {
-                self.try_command_object_list(&element[1..], arg_list_id, args, ret_form, host)
+                self.try_command_object_list(sub, &element[1..], arg_list_id, args, ret_form, host)
             }
 
             // Mwnd list — VM-side routing via command_mwnd module.

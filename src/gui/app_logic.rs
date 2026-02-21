@@ -8,6 +8,7 @@ impl GuiApp {
         shutdown: Arc<AtomicBool>,
         base_title: String,
         scene_size: Option<(i32, i32)>,
+        audio_manager: Option<AudioManager>,
     ) -> Self {
         Self {
             event_rx,
@@ -56,6 +57,7 @@ impl GuiApp {
             wipe_direction: WipeDirection::Normal,
 
             start_time: Instant::now(),
+            audio_manager,
         }
     }
 
@@ -296,6 +298,36 @@ impl GuiApp {
                     self.wipe_type = wipe_type;
                     self.wipe_direction = wipe_direction;
                     self.wipe_started_at = Some(Instant::now());
+                }
+                HostEvent::PlayBgm { name, loop_flag, fade_in_ms } => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.play_bgm(&name, loop_flag, fade_in_ms);
+                    }
+                }
+                HostEvent::StopBgm { fade_out_ms } => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.stop_bgm(fade_out_ms);
+                    }
+                }
+                HostEvent::PlaySe { name } => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.play_se(&name);
+                    }
+                }
+                HostEvent::StopSe => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.stop_se();
+                    }
+                }
+                HostEvent::PlayPcm { ch, name, loop_flag } => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.play_pcmch(ch, &name, loop_flag);
+                    }
+                }
+                HostEvent::StopPcm { ch } => {
+                    if let Some(am) = &mut self.audio_manager {
+                        am.stop_pcmch(ch);
+                    }
                 }
             }
         }

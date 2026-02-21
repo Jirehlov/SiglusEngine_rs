@@ -352,15 +352,30 @@ pub trait Host {
     /// C++ cmd_others.cpp: int_event WAIT/WAIT_KEY.
     fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
 
+    /// C++ cmd_others.cpp: int_event CHECK.
+    fn on_int_event_check(&mut self, _owner_id: i32) -> bool {
+        false
+    }
+
+    /// C++ cmd_others.cpp: int_event GET_EVENT_VALUE.
+    fn on_int_event_get_value(&mut self, _owner_id: i32) -> i32 {
+        0
+    }
+
     // ---------------------------------------------------------------
     // Object Host callbacks (cmd_object.cpp alignment)
     // ---------------------------------------------------------------
 
     /// C++ cmd_object.cpp: object property set (int value).
-    fn on_object_property(&mut self, _property_id: i32, _value: i32) {}
+    fn on_object_property(&mut self, _list_id: i32, _obj_index: i32, _property_id: i32, _value: i32) {}
 
     /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
-    fn on_object_action(&mut self, _sub_id: i32, _args: &[Prop]) {}
+    fn on_object_action(&mut self, _list_id: i32, _obj_index: i32, _sub_id: i32, _args: &[Prop]) {}
+
+    /// C++ cmd_object.cpp: object property get.
+    fn on_object_get(&mut self, _list_id: i32, _obj_index: i32, _sub_id: i32) -> i32 {
+        0
+    }
 
     // ---------------------------------------------------------------
     // Mwnd Host callbacks (cmd_mwnd.cpp alignment)
@@ -368,6 +383,11 @@ pub trait Host {
 
     /// C++ cmd_mwnd.cpp: mwnd action command (sub_id identifies the command).
     fn on_mwnd_action(&mut self, _sub_id: i32, _args: &[Prop]) {}
+
+    /// C++ cmd_mwnd.cpp: mwnd property get.
+    fn on_mwnd_get(&mut self, _sub_id: i32) -> i32 {
+        0
+    }
 
     // ---------------------------------------------------------------
     // Counter / Database / Others Host callbacks
