@@ -142,6 +142,46 @@ impl Vm {
             last_pc: 0,
             last_line_no: 0,
             last_scene: String::new(),
+            // ----- Script runtime flags (cmd_script.cpp alignment) -----
+            script_dont_set_save_point: false,
+            script_skip_disable: false,
+            script_ctrl_disable: false,
+            script_not_stop_skip_by_click: false,
+            script_not_skip_msg_by_click: false,
+            script_auto_mode_flag: false,
+            script_auto_mode_moji_wait: -1,
+            script_auto_mode_min_wait: -1,
+            script_auto_mode_moji_cnt: 0,
+            script_mouse_cursor_hide_onoff: -1,
+            script_mouse_cursor_hide_time: -1,
+            script_msg_speed: -1,
+            script_msg_nowait: false,
+            script_async_msg_mode: false,
+            script_async_msg_mode_once: false,
+            script_hide_mwnd_disable: false,
+            script_cursor_disp_off: false,
+            script_cursor_move_by_key_disable: false,
+            script_key_disable: [false; 256],
+            script_mwnd_anime_off_flag: false,
+            script_mwnd_anime_on_flag: false,
+            script_mwnd_disp_off_flag: false,
+            script_koe_dont_stop_on_flag: false,
+            script_koe_dont_stop_off_flag: false,
+            script_shortcut_disable: false,
+            script_quake_stop_flag: false,
+            script_emote_mouth_stop_flag: false,
+            script_bgmfade_flag: false,
+            script_vsync_wait_off_flag: false,
+            script_skip_trigger: false,
+            script_ignore_r_flag: false,
+            script_cursor_no: 0,
+            script_time_stop_flag: false,
+            script_counter_time_stop_flag: false,
+            script_frame_action_time_stop_flag: false,
+            script_font_name: String::new(),
+            script_font_bold: -1,
+            script_font_shadow: -1,
+            script_allow_joypad_mode_onoff: -1,
             local_save_slots: BTreeMap::new(),
             quick_save_slots: BTreeMap::new(),
             inner_save_slots: BTreeMap::new(),
@@ -220,6 +260,46 @@ impl Vm {
             last_pc: self.last_pc,
             last_line_no: self.last_line_no,
             last_scene: self.last_scene.clone(),
+            // ----- Script runtime flags -----
+            script_dont_set_save_point: self.script_dont_set_save_point,
+            script_skip_disable: self.script_skip_disable,
+            script_ctrl_disable: self.script_ctrl_disable,
+            script_not_stop_skip_by_click: self.script_not_stop_skip_by_click,
+            script_not_skip_msg_by_click: self.script_not_skip_msg_by_click,
+            script_auto_mode_flag: self.script_auto_mode_flag,
+            script_auto_mode_moji_wait: self.script_auto_mode_moji_wait,
+            script_auto_mode_min_wait: self.script_auto_mode_min_wait,
+            script_auto_mode_moji_cnt: self.script_auto_mode_moji_cnt,
+            script_mouse_cursor_hide_onoff: self.script_mouse_cursor_hide_onoff,
+            script_mouse_cursor_hide_time: self.script_mouse_cursor_hide_time,
+            script_msg_speed: self.script_msg_speed,
+            script_msg_nowait: self.script_msg_nowait,
+            script_async_msg_mode: self.script_async_msg_mode,
+            script_async_msg_mode_once: self.script_async_msg_mode_once,
+            script_hide_mwnd_disable: self.script_hide_mwnd_disable,
+            script_cursor_disp_off: self.script_cursor_disp_off,
+            script_cursor_move_by_key_disable: self.script_cursor_move_by_key_disable,
+            script_key_disable: self.script_key_disable,
+            script_mwnd_anime_off_flag: self.script_mwnd_anime_off_flag,
+            script_mwnd_anime_on_flag: self.script_mwnd_anime_on_flag,
+            script_mwnd_disp_off_flag: self.script_mwnd_disp_off_flag,
+            script_koe_dont_stop_on_flag: self.script_koe_dont_stop_on_flag,
+            script_koe_dont_stop_off_flag: self.script_koe_dont_stop_off_flag,
+            script_shortcut_disable: self.script_shortcut_disable,
+            script_quake_stop_flag: self.script_quake_stop_flag,
+            script_emote_mouth_stop_flag: self.script_emote_mouth_stop_flag,
+            script_bgmfade_flag: self.script_bgmfade_flag,
+            script_vsync_wait_off_flag: self.script_vsync_wait_off_flag,
+            script_skip_trigger: self.script_skip_trigger,
+            script_ignore_r_flag: self.script_ignore_r_flag,
+            script_cursor_no: self.script_cursor_no,
+            script_time_stop_flag: self.script_time_stop_flag,
+            script_counter_time_stop_flag: self.script_counter_time_stop_flag,
+            script_frame_action_time_stop_flag: self.script_frame_action_time_stop_flag,
+            script_font_name: self.script_font_name.clone(),
+            script_font_bold: self.script_font_bold,
+            script_font_shadow: self.script_font_shadow,
+            script_allow_joypad_mode_onoff: self.script_allow_joypad_mode_onoff,
         }
     }
     pub(super) fn apply_local_state(&mut self, st: &VmLocalState) {
@@ -292,6 +372,46 @@ impl Vm {
         self.last_pc = st.last_pc;
         self.last_line_no = st.last_line_no;
         self.last_scene = st.last_scene.clone();
+        // ----- Script runtime flags -----
+        self.script_dont_set_save_point = st.script_dont_set_save_point;
+        self.script_skip_disable = st.script_skip_disable;
+        self.script_ctrl_disable = st.script_ctrl_disable;
+        self.script_not_stop_skip_by_click = st.script_not_stop_skip_by_click;
+        self.script_not_skip_msg_by_click = st.script_not_skip_msg_by_click;
+        self.script_auto_mode_flag = st.script_auto_mode_flag;
+        self.script_auto_mode_moji_wait = st.script_auto_mode_moji_wait;
+        self.script_auto_mode_min_wait = st.script_auto_mode_min_wait;
+        self.script_auto_mode_moji_cnt = st.script_auto_mode_moji_cnt;
+        self.script_mouse_cursor_hide_onoff = st.script_mouse_cursor_hide_onoff;
+        self.script_mouse_cursor_hide_time = st.script_mouse_cursor_hide_time;
+        self.script_msg_speed = st.script_msg_speed;
+        self.script_msg_nowait = st.script_msg_nowait;
+        self.script_async_msg_mode = st.script_async_msg_mode;
+        self.script_async_msg_mode_once = st.script_async_msg_mode_once;
+        self.script_hide_mwnd_disable = st.script_hide_mwnd_disable;
+        self.script_cursor_disp_off = st.script_cursor_disp_off;
+        self.script_cursor_move_by_key_disable = st.script_cursor_move_by_key_disable;
+        self.script_key_disable = st.script_key_disable;
+        self.script_mwnd_anime_off_flag = st.script_mwnd_anime_off_flag;
+        self.script_mwnd_anime_on_flag = st.script_mwnd_anime_on_flag;
+        self.script_mwnd_disp_off_flag = st.script_mwnd_disp_off_flag;
+        self.script_koe_dont_stop_on_flag = st.script_koe_dont_stop_on_flag;
+        self.script_koe_dont_stop_off_flag = st.script_koe_dont_stop_off_flag;
+        self.script_shortcut_disable = st.script_shortcut_disable;
+        self.script_quake_stop_flag = st.script_quake_stop_flag;
+        self.script_emote_mouth_stop_flag = st.script_emote_mouth_stop_flag;
+        self.script_bgmfade_flag = st.script_bgmfade_flag;
+        self.script_vsync_wait_off_flag = st.script_vsync_wait_off_flag;
+        self.script_skip_trigger = st.script_skip_trigger;
+        self.script_ignore_r_flag = st.script_ignore_r_flag;
+        self.script_cursor_no = st.script_cursor_no;
+        self.script_time_stop_flag = st.script_time_stop_flag;
+        self.script_counter_time_stop_flag = st.script_counter_time_stop_flag;
+        self.script_frame_action_time_stop_flag = st.script_frame_action_time_stop_flag;
+        self.script_font_name = st.script_font_name.clone();
+        self.script_font_bold = st.script_font_bold;
+        self.script_font_shadow = st.script_font_shadow;
+        self.script_allow_joypad_mode_onoff = st.script_allow_joypad_mode_onoff;
         self.save_point_snapshot = st.save_point_snapshot.clone();
         self.sel_point_snapshot = st.sel_point_snapshot.clone();
         self.sel_point_stock = st.sel_point_stock.clone();

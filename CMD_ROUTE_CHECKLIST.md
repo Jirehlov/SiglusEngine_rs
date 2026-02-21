@@ -75,23 +75,22 @@
 ## 4) 本轮交接（Iteration Handoff）
 
 ### 本轮完成
-- 新增 `src/vm/command_effect.rs`，完整路由 `global.screen.*` 命令对齐 C++ `cmd_effect.cpp`。包含 screen 顶层属性分发（x/y/z/mono/reverse/bright/dark/color_*/color_add_*）、effect_list 管理（array/resize/get_size）、per-effect 属性获取/设定（含 init, wipe_copy/erase, begin/end order/layer）、quake_list/quake 完整路由（start/end/wait/check 全变体）。
-- 新增 `src/vm/command_world.rs`，完整路由 world 命令对齐 C++ `cmd_world.cpp`。包含 world_list 管理（create/destroy/array）、per-world camera_eye/pint/up xyz 属性获取/设定、calc_camera_eye/pint（三角计算）、set_camera helpers、camera_view_angle/mono/order/layer/wipe_copy/wipe_erase、事件分发器、set_camera_eve_xz_rotate。暂标 `#[allow(dead_code)]`，待 stage 子分发器接入。
-- `command_sound.rs::try_command_pcmch()` 重写：完整解析 C++ 11 个 named-arg（loop_flag, wait_flag, fade_in_time, volume_type, bgm_fade_target/fade2_target, chara_no, pcm_name, koe_no, se_no, bgm_name, bgm_fade_source），提取频道索引，PLAY/READY/STOP/PAUSE/RESUME/SET_VOLUME 均调用专用 Host 回调。
-- `api.rs` Host trait 新增 17 个回调：screen/effect/quake 系列（on_screen_property, on_effect_property, on_effect_init, on_quake_start, on_quake_end）、world 系列（on_world_property, on_world_create, on_world_destroy, on_world_init, on_world_set_camera, on_world_calc_camera）、PCMCH 系列（on_pcmch_play, on_pcmch_stop, on_pcmch_pause, on_pcmch_resume, on_pcmch_set_volume），均有默认 no-op 实现。
-- `command_tail.rs` 新增 `ELM_GLOBAL_SCREEN` 路由臂，调用 `try_command_screen()`；`global.rs` 中从 `is_host_passthrough_root` 移除 `ELM_GLOBAL_SCREEN`。
-- `mod.rs` 注册 `command_effect` 和 `command_world` 模块。
+- 新增 `src/vm/command_int_event.rs`：通用 int_event/int_event_list 子路由，对齐 C++ `cmd_others.cpp` `tnm_command_proc_int_event` / `tnm_command_proc_int_event_list`。覆盖 SET/SET_REAL/LOOP/LOOP_REAL/TURN/TURN_REAL/END/WAIT/WAIT_KEY/CHECK/GET_EVENT_VALUE/YURE 等全部子命令。支持 named-arg value override。
+- 新增 `src/vm/command_object.rs`：完整 object 子分发器，对齐 C++ `cmd_object.cpp`。包含 `try_command_object_list`（array 分发/resize/get_size）、`try_command_object`（~50 个属性 get/set、~30 个 `*_EVE` 属性 → int_event 子路由、ALL_EVE end/wait/check、create/init/free 生命周期、movie/emote/button/weather/GAN/hints/child 等高级命令完整路由）。
+- 新增 `src/vm/command_mwnd.rs`：完整 mwnd 子分发器，对齐 C++ `cmd_mwnd.cpp`。包含 `try_command_mwnd_list`（close_all 变体/array 分发）、`try_command_mwnd`（~60 个子命令：open/close、waku/filter、message/print/ruby/indent/slide、sel/selmsg、koe/exkoe、face、layer/world、window pos/size/moji_cnt、animation type/time、sub-object button/face/object → object_list）。
+- `command_stage.rs` 中 OBJECT 和 MWND 从 host passthrough 改为 VM 侧路由（调用 `try_command_object_list` / `try_command_mwnd_list`）。
+- `command_effect.rs` 和 `command_world.rs` 中所有 `*_EVE` 属性从 bare accept 改为 int_event 子路由（`try_command_int_event`）。
+- `api.rs` Host trait 新增 8 个回调：`on_int_event_set/loop/turn/end/wait`（int_event 5 个）+ `on_object_property/on_object_action`（object 2 个）+ `on_mwnd_action`（mwnd 1 个），均有默认 no-op 实现。
+- `mod.rs` 注册 `command_int_event`、`command_object`、`command_mwnd` 三个模块。
 - `cargo check` 通过，无 error 无 warning。
 
 ### 未完成 / 阻塞
 - Host 侧所有新回调均为 no-op stub，无真实渲染/音频/动画效果。
-- int_event 子路由（`tnm_command_proc_int_event`）在 effect/screen/world 的 `*_EVE` 命令中仅 accept，未完整复刻 C++ 事件控制逻辑。
-- World 路由需通过 stage 子分发器接入（C++ 中 world_list 挂在 stage 下），当前标记 `dead_code`。
-- BGM PLAY/READY 的 named-arg 覆盖逻辑（6 个 named-arg: regist_name, loop_flag, wait_flag, start_pos, fade_in_time, fade_out_time）尚未对齐（当前仅用位置参数）。
+- int_event 子路由 check/get_event_value 返回硬编码 0（无实际 event state tracking）。
+- Object/Mwnd 查询命令（get_size_x/y/z, get_pixel_color_*, get_file_name, check_open, get_window_pos_* 等）返回硬编码默认值。
 
 ### 下一轮首要任务（可直接执行）
-1. BGM PLAY/READY named-arg 覆盖对齐 C++ `tnm_command_proc_bgm` 的 `for (arg = al_end; arg < named_al_end; ...)` 循环。
-2. Stage 子分发器：从 host passthrough 中拆出 ELM_GLOBAL_STAGE/FRONT/BACK 至 VM 侧，接入 world_list 路由。
-3. int_event 通用子路由实现（start/end/wait/check/set_target 等），供 effect/screen/world event 属性使用。
-4. 接入真实音频后端（rodio / cpal），让 BGM/SE/PCM/PCMCH Host 回调实际播放音频。
+1. 接入真实音频后端（rodio / cpal），让 BGM/SE/PCM/PCMCH Host 回调实际播放音频。
+2. 对象/mwnd 状态追踪（在 GUI host 侧实现基础 object state，使 get_* 查询返回真实值）。
+3. int_event state tracking（让 check/get_event_value 返回真实动画进度）。
 

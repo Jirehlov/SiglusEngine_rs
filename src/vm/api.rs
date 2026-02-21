@@ -199,13 +199,13 @@ pub trait Host {
     fn on_break_step_line_advanced(&mut self) {}
 
     /// C++ cmd_sound.cpp: BGM play/oneshot/wait/ready.
-    fn on_bgm_play(&mut self, _name: &str, _loop_flag: bool, _wait_flag: bool, _fade_in: i32, _fade_out: i32, _ready: bool) {}
+    fn on_bgm_play(&mut self, _name: &str, _loop_flag: bool, _wait_flag: bool, _fade_in: i32, _fade_out: i32, _start_pos: i32, _ready: bool) {}
     /// C++ cmd_sound.cpp: BGM stop.
     fn on_bgm_stop(&mut self, _fade_out: i32) {}
     /// C++ cmd_sound.cpp: BGM pause.
     fn on_bgm_pause(&mut self, _fade: i32) {}
     /// C++ cmd_sound.cpp: BGM resume.
-    fn on_bgm_resume(&mut self, _fade: i32, _wait: bool) {}
+    fn on_bgm_resume(&mut self, _fade: i32, _wait: bool, _delay_time: i32) {}
     /// C++ cmd_sound.cpp: BGM set volume.
     fn on_bgm_set_volume(&mut self, _sub: i32, _vol: i32) {}
     /// C++ cmd_sound.cpp: PCM play.
@@ -307,4 +307,72 @@ pub trait Host {
 
     /// C++ cmd_sound.cpp: PCMCH set_volume.
     fn on_pcmch_set_volume(&mut self, _ch: i32, _sub: i32, _vol: i32) {}
+
+    // ---------------------------------------------------------------
+    // Stage / Group Host callbacks (cmd_stage.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_stage.cpp: group sel / sel_cancel.
+    fn on_group_sel(&mut self, _sub: i32) {}
+
+    /// C++ cmd_stage.cpp: group init (reinit).
+    fn on_group_init(&mut self) {}
+
+    /// C++ cmd_stage.cpp: group start / start_cancel.
+    fn on_group_start(&mut self, _sub: i32) {}
+
+    /// C++ cmd_stage.cpp: group end.
+    fn on_group_end(&mut self) {}
+
+    /// C++ cmd_stage.cpp: group_list alloc (clear + resize).
+    fn on_group_alloc(&mut self, _count: i32) {}
+
+    /// C++ cmd_stage.cpp: group_list free (clear).
+    fn on_group_free(&mut self) {}
+
+    /// C++ cmd_stage.cpp: group property set (order/layer/cancel_priority).
+    fn on_group_property(&mut self, _property_id: i32, _value: i32) {}
+
+    // ---------------------------------------------------------------
+    // int_event Host callbacks (cmd_others.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_others.cpp: int_event SET/SET_REAL.
+    fn on_int_event_set(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _realtime: i32, _value_override: Option<i32>) {}
+
+    /// C++ cmd_others.cpp: int_event LOOP/LOOP_REAL.
+    fn on_int_event_loop(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _count: i32, _realtime: i32) {}
+
+    /// C++ cmd_others.cpp: int_event TURN/TURN_REAL.
+    fn on_int_event_turn(&mut self, _owner_id: i32, _start: i32, _end: i32, _time: i32, _delay: i32, _count: i32, _realtime: i32) {}
+
+    /// C++ cmd_others.cpp: int_event END.
+    fn on_int_event_end(&mut self, _owner_id: i32) {}
+
+    /// C++ cmd_others.cpp: int_event WAIT/WAIT_KEY.
+    fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
+
+    // ---------------------------------------------------------------
+    // Object Host callbacks (cmd_object.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_object.cpp: object property set (int value).
+    fn on_object_property(&mut self, _property_id: i32, _value: i32) {}
+
+    /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
+    fn on_object_action(&mut self, _sub_id: i32, _args: &[Prop]) {}
+
+    // ---------------------------------------------------------------
+    // Mwnd Host callbacks (cmd_mwnd.cpp alignment)
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_mwnd.cpp: mwnd action command (sub_id identifies the command).
+    fn on_mwnd_action(&mut self, _sub_id: i32, _args: &[Prop]) {}
+
+    // ---------------------------------------------------------------
+    // Counter / Database / Others Host callbacks
+    // ---------------------------------------------------------------
+
+    /// C++ cmd_others.cpp: counter action (set/reset/start/stop/resume/wait).
+    fn on_counter_action(&mut self, _action: i32, _args: &[Prop]) {}
 }

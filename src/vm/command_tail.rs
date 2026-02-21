@@ -525,6 +525,36 @@ impl Vm {
                 return Ok(Some(false));
             }
             // -----------------------------------------------------------------
+            // Stage / Back / Front / Next commands (routed through command_stage)
+            // -----------------------------------------------------------------
+            x if x == crate::elm::global::ELM_GLOBAL_STAGE => {
+                if self.try_command_stage_list(&element[1..], arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                return Ok(Some(false));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_BACK => {
+                // Shortcut for stage[TNM_STAGE_BACK=0]
+                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                return Ok(Some(false));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_FRONT => {
+                // Shortcut for stage[TNM_STAGE_FRONT=1]
+                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                return Ok(Some(false));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_NEXT => {
+                // Shortcut for stage[TNM_STAGE_NEXT=2]
+                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                    return Ok(Some(true));
+                }
+                return Ok(Some(false));
+            }
+            // -----------------------------------------------------------------
             // Screen / Effect / Quake commands (routed through command_effect)
             // -----------------------------------------------------------------
             x if x == crate::elm::global::ELM_GLOBAL_SCREEN => {

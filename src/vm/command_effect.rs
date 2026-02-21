@@ -77,11 +77,7 @@ impl Vm {
             | ELM_SCREEN_COLOR_RATE_EVE
             | ELM_SCREEN_COLOR_ADD_R_EVE | ELM_SCREEN_COLOR_ADD_G_EVE | ELM_SCREEN_COLOR_ADD_B_EVE => {
                 // C++ dispatches to tnm_command_proc_int_event.
-                // Accept + delegate to host for event sub-commands.
-                let _remaining = &element[1..];
-                // For now, accept as no-op — int_event routing is complex and
-                // will be aligned in a future pass.
-                true
+                self.try_command_int_event(&element[1..], arg_list_id, args, ret_form, host, sub)
             }
 
             _ => {
@@ -96,7 +92,7 @@ impl Vm {
     // ---------------------------------------------------------------
 
     /// Route `screen.effect.<sub>` commands matching C++ `tnm_command_proc_effect_list`.
-    fn try_command_effect_list(
+    pub(super) fn try_command_effect_list(
         &mut self,
         element: &[i32],
         arg_list_id: i32,
@@ -192,8 +188,8 @@ impl Vm {
             | ELM_EFFECT_COLOR_R_EVE | ELM_EFFECT_COLOR_G_EVE | ELM_EFFECT_COLOR_B_EVE
             | ELM_EFFECT_COLOR_RATE_EVE
             | ELM_EFFECT_COLOR_ADD_R_EVE | ELM_EFFECT_COLOR_ADD_G_EVE | ELM_EFFECT_COLOR_ADD_B_EVE => {
-                // Accept — int_event sub-routing deferred.
-                true
+                // C++ dispatches to tnm_command_proc_int_event.
+                self.try_command_int_event(&element[1..], arg_list_id, args, _ret_form, host, sub)
             }
 
             _ => {
@@ -208,7 +204,7 @@ impl Vm {
     // ---------------------------------------------------------------
 
     /// Route `screen.quake.<sub>` commands matching C++ `tnm_command_proc_quake_list`.
-    fn try_command_quake_list(
+    pub(super) fn try_command_quake_list(
         &mut self,
         element: &[i32],
         arg_list_id: i32,

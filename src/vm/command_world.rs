@@ -12,7 +12,6 @@
 /// Property set / calc commands delegate to Host callbacks.
 use super::*;
 
-#[allow(dead_code)]
 impl Vm {
     // ---------------------------------------------------------------
     // World list: global.screen.world_list
@@ -143,8 +142,8 @@ impl Vm {
             ELM_WORLD_CAMERA_EYE_X_EVE | ELM_WORLD_CAMERA_EYE_Y_EVE | ELM_WORLD_CAMERA_EYE_Z_EVE
             | ELM_WORLD_CAMERA_PINT_X_EVE | ELM_WORLD_CAMERA_PINT_Y_EVE | ELM_WORLD_CAMERA_PINT_Z_EVE
             | ELM_WORLD_CAMERA_UP_X_EVE | ELM_WORLD_CAMERA_UP_Y_EVE | ELM_WORLD_CAMERA_UP_Z_EVE => {
-                // C++ tnm_command_proc_int_event — accept for now.
-                true
+                // C++ tnm_command_proc_int_event — route to int_event sub-router.
+                self.try_command_int_event(&element[1..], arg_list_id, args, _ret_form, host, sub)
             }
 
             _ => {

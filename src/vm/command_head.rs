@@ -333,71 +333,79 @@ impl Vm {
                     }
                 }
             }
-            x if x == crate::elm::global::ELM_GLOBAL_SCRIPT && element.len() >= 2 => {
-                let method = element[1];
-                if crate::elm::script::is_set_int_command(method) {
-                    let v = match args.get(0).map(|p| &p.value) {
-                        Some(PropValue::Int(v)) => *v,
-                        _ => 0,
-                    };
-                    if crate::elm::script::is_set_skip_unread_message_flag(method) {
-                        self.script_skip_unread_message_flag = v;
-                    } else if crate::elm::script::is_set_msg_back_disable(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_DISABLE
-                        self.msg_back_disable_flag = 1;
-                    } else if crate::elm::script::is_set_msg_back_enable(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_ENABLE
-                        self.msg_back_disable_flag = 0;
-                    } else if crate::elm::script::is_set_msg_back_off(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_OFF
-                        self.msg_back_off_flag = 1;
-                    } else if crate::elm::script::is_set_msg_back_on(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_ON
-                        self.msg_back_off_flag = 0;
-                    } else if crate::elm::script::is_set_msg_back_disp_off(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_DISP_OFF
-                        self.msg_back_disp_off_flag = 1;
-                        host.on_msg_back_state(false);
-                        host.on_msg_back_display(false);
-                    } else if crate::elm::script::is_set_msg_back_disp_on(method) {
-                        // C++ reference: cmd_script.cpp::ELM_SCRIPT_SET_MSG_BACK_DISP_ON
-                        self.msg_back_disp_off_flag = 0;
-                        host.on_msg_back_display(true);
-                        if self.msg_back_open_flag != 0 {
-                            host.on_msg_back_state(true);
-                        }
-                    } else if crate::elm::script::is_set_msg_back_proc_off(method) {
-                        // STUB(C++: ELM_SCRIPT_SET_MSG_BACK_PROC_OFF appears in constants but
-                        // runtime-side behavior path is not found in current source snapshot.)
-                        self.msg_back_proc_off_flag = 1;
-                    } else if crate::elm::script::is_set_msg_back_proc_on(method) {
-                        // STUB(C++: ELM_SCRIPT_SET_MSG_BACK_PROC_ON appears in constants but
-                        // runtime-side behavior path is not found in current source snapshot.)
-                        self.msg_back_proc_off_flag = 0;
-                    } else {
-                        self.script_stage_time_stop_flag = v;
-                    }
-                    if ret_form == crate::elm::form::INT {
-                        self.stack.push_int(0);
-                    }
+            // ----- Script commands: full cmd_script.cpp alignment -----
+            x if x == crate::elm::global::ELM_GLOBAL_SCRIPT => {
+                if element.len() >= 2 {
+                    self.try_command_script(&element[1..], _arg_list_id, args, ret_form, host);
                     return Ok(Some(true));
                 }
                 return Ok(Some(false));
             }
-            x if crate::elm::input::is_clear_or_next(x) => {
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+
+            // ----- Input / Mouse / Key / Keyboard / Editbox -----
+            x if x == crate::elm::global::ELM_GLOBAL_INPUT => {
+                self.try_command_input(&element[1..], _arg_list_id, args, ret_form, host);
                 return Ok(Some(true));
             }
-            x if crate::elm::input::is_decide_or_cancel(x)
-                || crate::elm::mouse::is_query_int(x) =>
+            x if x == crate::elm::global::ELM_GLOBAL_MOUSE => {
+                self.try_command_mouse(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_KEY
+                || x == crate::elm::global::ELM_GLOBAL_KEYBOARD =>
             {
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
+                self.try_command_key_list(&element[1..], _arg_list_id, args, ret_form, host);
                 return Ok(Some(true));
             }
+            x if x == crate::elm::global::ELM_GLOBAL_EDITBOX => {
+                self.try_command_editbox_list(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+
+            // ----- Counter / Database / CgTable / BgmTable / G00Buf / Mask / File -----
+            x if x == crate::elm::global::ELM_GLOBAL_COUNTER => {
+                self.try_command_counter_list(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_DATABASE => {
+                self.try_command_database_list(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_CGTABLE => {
+                self.try_command_cg_table(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_BGMTABLE => {
+                self.try_command_bgm_table(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_G00BUF => {
+                self.try_command_g00buf(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_MASK => {
+                self.try_command_mask_list(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_FILE => {
+                self.try_command_file(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+
+            // ----- Call / Excall -----
+            x if x == crate::elm::global::ELM_GLOBAL_CALL => {
+                self.try_command_call_list(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_CUR_CALL => {
+                self.try_command_cur_call(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+            x if x == crate::elm::global::ELM_GLOBAL_EXCALL => {
+                self.try_command_excall(&element[1..], _arg_list_id, args, ret_form, host);
+                return Ok(Some(true));
+            }
+
             _ => {
                 // Try syscom commands
                 if let Some(res) = self.try_command_syscom(element, _arg_list_id, args, ret_form, provider, host)? {

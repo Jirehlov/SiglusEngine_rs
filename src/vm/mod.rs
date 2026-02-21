@@ -5,13 +5,21 @@ use anyhow::{Context, Result, bail};
 use crate::{dat::SceneDat, lexer::SceneLexer, stack::IfcStack};
 
 mod api;
+mod command_call;
 mod command_head;
+mod command_input;
 mod command_misc;
+mod command_others;
+mod command_script;
 mod command_syscom;
 mod command_syscom_endio;
 mod command_syscom_return;
 mod command_effect;
+mod command_int_event;
+mod command_mwnd;
+mod command_object;
 mod command_sound;
+mod command_stage;
 mod command_tail;
 mod command_world;
 mod command_try;
@@ -326,6 +334,46 @@ struct VmLocalState {
     last_pc: usize,
     last_line_no: i32,
     last_scene: String,
+    // ----- Script runtime flags (cmd_script.cpp alignment) -----
+    script_dont_set_save_point: bool,
+    script_skip_disable: bool,
+    script_ctrl_disable: bool,
+    script_not_stop_skip_by_click: bool,
+    script_not_skip_msg_by_click: bool,
+    script_auto_mode_flag: bool,
+    script_auto_mode_moji_wait: i32,
+    script_auto_mode_min_wait: i32,
+    script_auto_mode_moji_cnt: i32,
+    script_mouse_cursor_hide_onoff: i32,
+    script_mouse_cursor_hide_time: i32,
+    script_msg_speed: i32,
+    script_msg_nowait: bool,
+    script_async_msg_mode: bool,
+    script_async_msg_mode_once: bool,
+    script_hide_mwnd_disable: bool,
+    script_cursor_disp_off: bool,
+    script_cursor_move_by_key_disable: bool,
+    script_key_disable: [bool; 256],
+    script_mwnd_anime_off_flag: bool,
+    script_mwnd_anime_on_flag: bool,
+    script_mwnd_disp_off_flag: bool,
+    script_koe_dont_stop_on_flag: bool,
+    script_koe_dont_stop_off_flag: bool,
+    script_shortcut_disable: bool,
+    script_quake_stop_flag: bool,
+    script_emote_mouth_stop_flag: bool,
+    script_bgmfade_flag: bool,
+    script_vsync_wait_off_flag: bool,
+    script_skip_trigger: bool,
+    script_ignore_r_flag: bool,
+    script_cursor_no: i32,
+    script_time_stop_flag: bool,
+    script_counter_time_stop_flag: bool,
+    script_frame_action_time_stop_flag: bool,
+    script_font_name: String,
+    script_font_bold: i32,
+    script_font_shadow: i32,
+    script_allow_joypad_mode_onoff: i32,
 }
 
 /// Default flag array size matching C++ engine (32 elements each for A-G, X, Z).
@@ -427,6 +475,47 @@ pub struct Vm {
     last_pc: usize,
     last_line_no: i32,
     last_scene: String,
+
+    // ----- Script runtime flags (cmd_script.cpp alignment) -----
+    script_dont_set_save_point: bool,
+    script_skip_disable: bool,
+    script_ctrl_disable: bool,
+    script_not_stop_skip_by_click: bool,
+    script_not_skip_msg_by_click: bool,
+    script_auto_mode_flag: bool,
+    script_auto_mode_moji_wait: i32,
+    script_auto_mode_min_wait: i32,
+    script_auto_mode_moji_cnt: i32,
+    script_mouse_cursor_hide_onoff: i32,
+    script_mouse_cursor_hide_time: i32,
+    script_msg_speed: i32,
+    script_msg_nowait: bool,
+    script_async_msg_mode: bool,
+    script_async_msg_mode_once: bool,
+    script_hide_mwnd_disable: bool,
+    script_cursor_disp_off: bool,
+    script_cursor_move_by_key_disable: bool,
+    script_key_disable: [bool; 256],
+    script_mwnd_anime_off_flag: bool,
+    script_mwnd_anime_on_flag: bool,
+    script_mwnd_disp_off_flag: bool,
+    script_koe_dont_stop_on_flag: bool,
+    script_koe_dont_stop_off_flag: bool,
+    script_shortcut_disable: bool,
+    script_quake_stop_flag: bool,
+    script_emote_mouth_stop_flag: bool,
+    script_bgmfade_flag: bool,
+    script_vsync_wait_off_flag: bool,
+    script_skip_trigger: bool,
+    script_ignore_r_flag: bool,
+    script_cursor_no: i32,
+    script_time_stop_flag: bool,
+    script_counter_time_stop_flag: bool,
+    script_frame_action_time_stop_flag: bool,
+    script_font_name: String,
+    script_font_bold: i32,
+    script_font_shadow: i32,
+    script_allow_joypad_mode_onoff: i32,
 
     // ----- Local save slots (Rust-native UX-compatible save/load) -----
     local_save_slots: BTreeMap<i32, LocalSaveSlot>,

@@ -228,31 +228,12 @@ pub fn is_any_global_element(elm: i32) -> bool {
 pub fn is_host_passthrough_root(elm: i32) -> bool {
     matches!(
         elm,
-        x if x == crate::elm::global::ELM_GLOBAL_INPUT
-            || x == crate::elm::global::ELM_GLOBAL_MOUSE
-            || x == crate::elm::global::ELM_GLOBAL_KEY
-            || x == crate::elm::global::ELM_GLOBAL_SCRIPT
-            || x == crate::elm::global::ELM_GLOBAL_SYSCOM
+        x if x == crate::elm::global::ELM_GLOBAL_SYSCOM
             || x == crate::elm::global::ELM_GLOBAL_SYSCOM_MENU
             || x == crate::elm::global::ELM_GLOBAL_MWND_BTN
             || x == crate::elm::global::ELM_GLOBAL_SYSTEM
-            || x == crate::elm::global::ELM_GLOBAL_STAGE
-            || x == crate::elm::global::ELM_GLOBAL_BACK
-            || x == crate::elm::global::ELM_GLOBAL_FRONT
-            || x == crate::elm::global::ELM_GLOBAL_NEXT
             || x == crate::elm::global::ELM_GLOBAL_MSGBK
-            || x == crate::elm::global::ELM_GLOBAL_COUNTER
-            || x == crate::elm::global::ELM_GLOBAL_DATABASE
-            || x == crate::elm::global::ELM_GLOBAL_CGTABLE
-            || x == crate::elm::global::ELM_GLOBAL_BGMTABLE
-            || x == crate::elm::global::ELM_GLOBAL_G00BUF
-            || x == crate::elm::global::ELM_GLOBAL_MASK
-            || x == crate::elm::global::ELM_GLOBAL_EDITBOX
-            || x == crate::elm::global::ELM_GLOBAL_FILE
-            || x == crate::elm::global::ELM_GLOBAL_CALL
-            || x == crate::elm::global::ELM_GLOBAL_EXCALL
             || x == crate::elm::global::ELM_GLOBAL_STEAM
-            || x == crate::elm::global::ELM_GLOBAL_KEYBOARD
             || x == crate::elm::global::ELM_GLOBAL_NAMAE
     )
 }
