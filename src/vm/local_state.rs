@@ -13,6 +13,8 @@ impl Vm {
             frame_action: self.frame_action.clone(),
             frame_action_ch: self.frame_action_ch.clone(),
             key_wait_proc: self.key_wait_proc,
+            group_wait_proc: self.group_wait_proc,
+            excall_allocated: self.excall_allocated,
             flags_a: self.flags_a.clone(),
             flags_b: self.flags_b.clone(),
             flags_c: self.flags_c.clone(),
@@ -129,6 +131,8 @@ impl Vm {
         self.frame_action = st.frame_action.clone();
         self.frame_action_ch = st.frame_action_ch.clone();
         self.key_wait_proc = st.key_wait_proc;
+        self.group_wait_proc = st.group_wait_proc;
+        self.excall_allocated = st.excall_allocated;
         self.flags_a = st.flags_a.clone();
         self.flags_b = st.flags_b.clone();
         self.flags_c = st.flags_c.clone();
@@ -319,5 +323,7 @@ impl Vm {
         self.sel_point_stock = None;
         self.return_scene_once = None;
         self.key_wait_proc = KeyWaitProc::default();
+        self.group_wait_proc = GroupWaitProc::default();
+        self.excall_allocated = [false; 2];
     }
 }

@@ -1,3 +1,6 @@
+include!("host_impl_input.rs");
+include!("host_impl_stage_object.rs");
+
 impl siglus::vm::Host for GuiHost {
     fn on_name(&mut self, name: &str) {
         let _ = self.event_tx.send(HostEvent::Name(name.to_string()));
@@ -211,12 +214,63 @@ impl siglus::vm::Host for GuiHost {
         self.skip_mode.load(Ordering::Relaxed)
     }
     fn on_wait_frame(&mut self) {
+        self.refresh_movie_lifecycle();
         if self.shutdown.load(Ordering::Relaxed) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
-    include!("host_impl_input.rs");
+
+    fn on_movie_is_playing(&mut self) -> bool {
+        self.refresh_movie_lifecycle();
+        !self.movie_playing_objects.is_empty() || self.global_mov_playing
+    }
+
+    fn on_mwnd_list_get_size(&mut self) -> i32 {
+        self.mwnd_list_size
+    }
+
+    fn on_world_list_get_size(&mut self) -> i32 {
+        self.world_list_size
+    }
+
+    fn on_world_create(&mut self) {
+        self.world_list_size = self.world_list_size.saturating_add(1);
+    }
+
+    fn on_world_destroy(&mut self) {
+        self.world_list_size = self.world_list_size.saturating_sub(1);
+    }
+
+    fn on_effect_list_get_size(&mut self) -> i32 {
+        self.effect_list_size
+    }
+
+    fn on_effect_list_resize(&mut self, size: i32) {
+        self.effect_list_size = size.max(0);
+    }
+
+    fn on_quake_list_get_size(&mut self) -> i32 {
+        self.quake_list_size
+    }
+
+    fn on_quake_list_resize(&mut self, size: i32) {
+        self.quake_list_size = size.max(0);
+    }
+
+    impl_host_quake_methods!();
+
+    fn on_int_event_list_get_size(&mut self, _owner_id: i32) -> i32 {
+        self.int_event_list_sizes
+            .get(&_owner_id)
+            .copied()
+            .unwrap_or(1)
+    }
+
+    fn on_int_event_list_resize(&mut self, owner_id: i32, size: i32) {
+        self.int_event_list_sizes.insert(owner_id, size.max(0));
+    }
+    impl_host_input_methods!();
     fn on_msg_back_state(&mut self, open: bool) {
         let _ = self.event_tx.send(HostEvent::MsgBackState(open));
     }
@@ -457,6 +511,12 @@ impl siglus::vm::Host for GuiHost {
     fn on_se_stop(&mut self, _fade: i32) {
         let _ = self.event_tx.send(HostEvent::StopSe);
     }
+    fn on_mov_play(&mut self, _name: &str) {
+        self.global_mov_playing = true;
+    }
+    fn on_mov_stop(&mut self) {
+        self.global_mov_playing = false;
+    }
     fn on_pcmch_play(
         &mut self,
         ch: i32,
@@ -477,6 +537,8 @@ impl siglus::vm::Host for GuiHost {
     fn on_pcmch_stop(&mut self, ch: i32, _fade: i32) {
         let _ = self.event_tx.send(HostEvent::StopPcm { ch });
     }
+    impl_host_stage_object_methods!();
+
     fn on_int_event_set(
         &mut self,
         owner_id: i32,

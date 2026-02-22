@@ -1,5 +1,15 @@
 use super::*;
 include!("host_stage_impl.rs");
+
+pub(super) fn stage_idx_to_plane(stage_idx: i32) -> Option<StagePlane> {
+    match stage_idx {
+        0 => Some(StagePlane::Back),
+        1 => Some(StagePlane::Front),
+        2 => Some(StagePlane::Next),
+        _ => None,
+    }
+}
+
 pub(super) fn parse_stage_object_command(element: &[i32]) -> Option<(StagePlane, i32, i32)> {
     use siglus::elm::ELM_ARRAY;
 
@@ -17,7 +27,10 @@ pub(super) fn parse_stage_object_command(element: &[i32]) -> Option<(StagePlane,
 
     let (plane, tail) = if let Some(plane) = element.first().and_then(|v| global_to_plane(*v)) {
         (plane, &element[1..])
-    } else if element.len() >= 3 && element[0] == siglus::elm::global::ELM_GLOBAL_STAGE && element[1] == ELM_ARRAY {
+    } else if element.len() >= 3
+        && element[0] == siglus::elm::global::ELM_GLOBAL_STAGE
+        && element[1] == ELM_ARRAY
+    {
         let plane = match element[2] {
             0 => StagePlane::Back,
             1 => StagePlane::Front,
@@ -29,11 +42,17 @@ pub(super) fn parse_stage_object_command(element: &[i32]) -> Option<(StagePlane,
         return None;
     };
 
-    if tail.len() >= 4 && tail[0] == siglus::elm::objectlist::ELM_STAGE_OBJECT && tail[1] == ELM_ARRAY {
+    if tail.len() >= 4
+        && tail[0] == siglus::elm::objectlist::ELM_STAGE_OBJECT
+        && tail[1] == ELM_ARRAY
+    {
         return Some((plane, tail[2], tail[3]));
     }
 
-    if tail.len() >= 4 && tail[0] == ELM_ARRAY && tail[2] == siglus::elm::objectlist::ELM_STAGE_OBJECT {
+    if tail.len() >= 4
+        && tail[0] == ELM_ARRAY
+        && tail[2] == siglus::elm::objectlist::ELM_STAGE_OBJECT
+    {
         return Some((plane, tail[1], tail[3]));
     }
 
@@ -178,7 +197,7 @@ pub(super) fn summarize_props(args: &[siglus::vm::Prop]) -> String {
 }
 
 pub(super) fn is_visual_or_flow_command(element: &[i32]) -> bool {
-        element.iter().any(|v| {
+    element.iter().any(|v| {
         matches!(
             *v,
             siglus::elm::global::ELM_GLOBAL_STAGE

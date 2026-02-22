@@ -34,8 +34,24 @@ impl Vm {
         if element[0] == crate::elm::ELM_ARRAY {
             // Indexed: mwnd_list[idx].sub
             if element.len() >= 2 {
-                let _mwnd_idx = element[1];
-                let rest = if element.len() > 2 { &element[2..] } else { &[] };
+                let mwnd_idx = element[1];
+                let mwnd_size = host.on_mwnd_list_get_size();
+                if mwnd_size >= 0 && (mwnd_idx < 0 || mwnd_idx >= mwnd_size) {
+                    if self.options.disp_out_of_range_error {
+                        host.on_error("範囲外のウィンドウ番号が指定されました。(mwnd_list)");
+                    }
+                    if ret_form == crate::elm::form::INT {
+                        self.stack.push_int(0);
+                    } else if ret_form == crate::elm::form::STR {
+                        self.stack.push_str(String::new());
+                    }
+                    return true;
+                }
+                let rest = if element.len() > 2 {
+                    &element[2..]
+                } else {
+                    &[]
+                };
                 return self.try_command_mwnd(rest, arg_list_id, args, ret_form, host);
             }
             return true;
@@ -182,8 +198,12 @@ impl Vm {
             }
 
             // --- KOE ---
-            ELM_MWND_KOE | ELM_MWND_KOE_PLAY_WAIT | ELM_MWND_KOE_PLAY_WAIT_KEY
-            | ELM_MWND_EXKOE | ELM_MWND_EXKOE_PLAY_WAIT | ELM_MWND_EXKOE_PLAY_WAIT_KEY => {
+            ELM_MWND_KOE
+            | ELM_MWND_KOE_PLAY_WAIT
+            | ELM_MWND_KOE_PLAY_WAIT_KEY
+            | ELM_MWND_EXKOE
+            | ELM_MWND_EXKOE_PLAY_WAIT
+            | ELM_MWND_EXKOE_PLAY_WAIT_KEY => {
                 host.on_mwnd_action(sub, args);
                 true
             }
@@ -205,35 +225,56 @@ impl Vm {
             }
 
             // --- Sub-object lists (button, face, object) → delegate to object_list ---
-            ELM_MWND_BUTTON | ELM_MWND_FACE | ELM_MWND_OBJECT => {
-                self.try_command_object_list(sub, &element[1..], arg_list_id, args, ret_form, host)
-            }
+            ELM_MWND_BUTTON | ELM_MWND_FACE | ELM_MWND_OBJECT => self.try_command_object_list(
+                sub,
+                None,
+                &element[1..],
+                arg_list_id,
+                args,
+                ret_form,
+                host,
+            ),
 
             // --- Window position / size / moji_cnt ---
-            ELM_MWND_INIT_WINDOW_POS | ELM_MWND_INIT_WINDOW_SIZE | ELM_MWND_INIT_WINDOW_MOJI_CNT
-            | ELM_MWND_SET_WINDOW_POS | ELM_MWND_SET_WINDOW_SIZE | ELM_MWND_SET_WINDOW_MOJI_CNT => {
+            ELM_MWND_INIT_WINDOW_POS
+            | ELM_MWND_INIT_WINDOW_SIZE
+            | ELM_MWND_INIT_WINDOW_MOJI_CNT
+            | ELM_MWND_SET_WINDOW_POS
+            | ELM_MWND_SET_WINDOW_SIZE
+            | ELM_MWND_SET_WINDOW_MOJI_CNT => {
                 host.on_mwnd_action(sub, args);
                 true
             }
-            ELM_MWND_GET_WINDOW_POS_X | ELM_MWND_GET_WINDOW_POS_Y
-            | ELM_MWND_GET_WINDOW_SIZE_X | ELM_MWND_GET_WINDOW_SIZE_Y
-            | ELM_MWND_GET_WINDOW_MOJI_CNT_X | ELM_MWND_GET_WINDOW_MOJI_CNT_Y => {
+            ELM_MWND_GET_WINDOW_POS_X
+            | ELM_MWND_GET_WINDOW_POS_Y
+            | ELM_MWND_GET_WINDOW_SIZE_X
+            | ELM_MWND_GET_WINDOW_SIZE_Y
+            | ELM_MWND_GET_WINDOW_MOJI_CNT_X
+            | ELM_MWND_GET_WINDOW_MOJI_CNT_Y => {
                 self.stack.push_int(host.on_mwnd_get(sub));
                 true
             }
 
             // --- Animation type / time ---
-            ELM_MWND_INIT_OPEN_ANIME_TYPE | ELM_MWND_INIT_OPEN_ANIME_TIME
-            | ELM_MWND_INIT_CLOSE_ANIME_TYPE | ELM_MWND_INIT_CLOSE_ANIME_TIME
-            | ELM_MWND_SET_OPEN_ANIME_TYPE | ELM_MWND_SET_OPEN_ANIME_TIME
-            | ELM_MWND_SET_CLOSE_ANIME_TYPE | ELM_MWND_SET_CLOSE_ANIME_TIME => {
+            ELM_MWND_INIT_OPEN_ANIME_TYPE
+            | ELM_MWND_INIT_OPEN_ANIME_TIME
+            | ELM_MWND_INIT_CLOSE_ANIME_TYPE
+            | ELM_MWND_INIT_CLOSE_ANIME_TIME
+            | ELM_MWND_SET_OPEN_ANIME_TYPE
+            | ELM_MWND_SET_OPEN_ANIME_TIME
+            | ELM_MWND_SET_CLOSE_ANIME_TYPE
+            | ELM_MWND_SET_CLOSE_ANIME_TIME => {
                 host.on_mwnd_action(sub, args);
                 true
             }
-            ELM_MWND_GET_OPEN_ANIME_TYPE | ELM_MWND_GET_OPEN_ANIME_TIME
-            | ELM_MWND_GET_CLOSE_ANIME_TYPE | ELM_MWND_GET_CLOSE_ANIME_TIME
-            | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TYPE | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TIME
-            | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TYPE | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TIME => {
+            ELM_MWND_GET_OPEN_ANIME_TYPE
+            | ELM_MWND_GET_OPEN_ANIME_TIME
+            | ELM_MWND_GET_CLOSE_ANIME_TYPE
+            | ELM_MWND_GET_CLOSE_ANIME_TIME
+            | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TYPE
+            | ELM_MWND_GET_DEFAULT_OPEN_ANIME_TIME
+            | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TYPE
+            | ELM_MWND_GET_DEFAULT_CLOSE_ANIME_TIME => {
                 self.stack.push_int(host.on_mwnd_get(sub));
                 true
             }

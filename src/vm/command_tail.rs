@@ -535,21 +535,21 @@ impl Vm {
             }
             x if x == crate::elm::global::ELM_GLOBAL_BACK => {
                 // Shortcut for stage[TNM_STAGE_BACK=0]
-                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                if self.try_command_stage(0, &element[1..], arg_list_id, args, ret_form, host) {
                     return Ok(Some(true));
                 }
                 return Ok(Some(false));
             }
             x if x == crate::elm::global::ELM_GLOBAL_FRONT => {
                 // Shortcut for stage[TNM_STAGE_FRONT=1]
-                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                if self.try_command_stage(1, &element[1..], arg_list_id, args, ret_form, host) {
                     return Ok(Some(true));
                 }
                 return Ok(Some(false));
             }
             x if x == crate::elm::global::ELM_GLOBAL_NEXT => {
                 // Shortcut for stage[TNM_STAGE_NEXT=2]
-                if self.try_command_stage(&element[1..], arg_list_id, args, ret_form, host) {
+                if self.try_command_stage(2, &element[1..], arg_list_id, args, ret_form, host) {
                     return Ok(Some(true));
                 }
                 return Ok(Some(false));

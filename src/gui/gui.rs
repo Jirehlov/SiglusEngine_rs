@@ -59,16 +59,7 @@ const SEL_BUTTON_HOVER_BG: egui::Color32 =
 
 // ── Host events (VM thread → GUI thread) ────────────────────────────────
 
-/// C++ wipe range classification:
-/// - `Normal`    = script-level WIPE / MASK_WIPE commands
-/// - `SystemIn`  = TNM_WIPE_RANGE_SYSTEM_IN  (fade *from* black after load)
-/// - `SystemOut` = TNM_WIPE_RANGE_SYSTEM_OUT (fade *to* black before load)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WipeDirection {
-    Normal,
-    SystemIn,
-    SystemOut,
-}
+include!("wipe_direction.rs");
 
 enum HostEvent {
     Name(String),
@@ -181,8 +172,27 @@ enum HostEvent {
     StopPcm {
         ch: i32,
     },
+    PlayObjectMovie {
+        stage: StagePlane,
+        index: i32,
+        file_name: String,
+        duration_ms: i32,
+        generation: u64,
+    },
+    StopObjectMovie {
+        stage: StagePlane,
+        index: i32,
+        generation: u64,
+    },
+    StartQuake {
+        req: siglus::vm::VmQuakeRequest,
+        started_at: Instant,
+    },
+    EndQuake,
     Done,
 }
+
+include!("movie_events.rs");
 
 // ── Advance signal (GUI thread → VM thread) ─────────────────────────────
 
@@ -192,12 +202,7 @@ enum AdvanceSignal {
     Shutdown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum StagePlane {
-    Back,
-    Front,
-    Next,
-}
+include!("stage_plane.rs");
 
 #[derive(Debug, Clone)]
 struct HostObjectState {
@@ -259,6 +264,21 @@ struct ObjectRenderState {
     src_clip_bottom: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+struct HostGroupState {
+    order: i32,
+    layer: i32,
+    cancel_priority: i32,
+    hit_button_no: i32,
+    pushed_button_no: i32,
+    decided_button_no: i32,
+    result: i32,
+    result_button_no: i32,
+    active: bool,
+    cancel_enabled: bool,
+    cancel_se_no: i32,
+}
+
 #[derive(Debug, Clone)]
 struct IntEventState {
     start_val: i32,
@@ -274,40 +294,47 @@ struct GuiHost {
     selection_rx: mpsc::Receiver<i32>,
     return_to_menu_warning_rx: mpsc::Receiver<bool>,
     advance_rx: mpsc::Receiver<AdvanceSignal>,
+    movie_event_rx: mpsc::Receiver<MoviePlaybackEvent>,
     skip_mode: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     base_dir: PathBuf,
     append_dirs: Vec<PathBuf>,
     persistent_state_path: PathBuf,
     objects: BTreeMap<(StagePlane, i32), HostObjectState>,
+    stage_object_sizes: BTreeMap<StagePlane, i32>,
+    stage_group_sizes: BTreeMap<StagePlane, i32>,
+    groups: BTreeMap<(StagePlane, i32), HostGroupState>,
+    movie_playing_objects: std::collections::BTreeSet<(StagePlane, i32)>,
+    movie_auto_free_ms: BTreeMap<(StagePlane, i32), i32>,
+    movie_generations: BTreeMap<(StagePlane, i32), u64>,
+    movie_last_failure: BTreeMap<(StagePlane, i32), MovieFailureInfo>,
+    next_movie_generation: u64,
+    global_mov_playing: bool,
+    mwnd_list_size: i32,
+    world_list_size: i32,
+    effect_list_size: i32,
+    quake_list_size: i32,
+    int_event_list_sizes: BTreeMap<i32, i32>,
+    quake_active_until: Option<Instant>,
+    last_quake_request: Option<siglus::vm::VmQuakeRequest>,
     next_object_seq: u64,
     int_events: std::collections::HashMap<i32, IntEventState>,
     input_state: Arc<Mutex<SharedInputState>>,
+    cancel_se_map: BTreeMap<i32, String>,
 }
 
-const IMAGE_EXT_CANDIDATES: [&str; 5] = ["g00", "bmp", "png", "jpg", "dds"];
-
-trait PropIntExt {
-    fn as_int(&self) -> Option<i32>;
-}
-
-impl PropIntExt for siglus::vm::Prop {
-    fn as_int(&self) -> Option<i32> {
-        if let siglus::vm::PropValue::Int(v) = self.value {
-            Some(v)
-        } else {
-            None
-        }
-    }
-}
+include!("prop_int_ext.rs");
+include!("host_impl_quake_macro.rs");
+include!("cancel_se_map.rs");
+include!("app_render_overlay_macro.rs");
 
 include!("host_impl.rs");
-
 struct GuiApp {
     event_rx: mpsc::Receiver<HostEvent>,
     selection_tx: mpsc::Sender<i32>,
     return_to_menu_warning_tx: mpsc::Sender<bool>,
     advance_tx: mpsc::Sender<AdvanceSignal>,
+    movie_event_tx: mpsc::Sender<MoviePlaybackEvent>,
     skip_mode: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 
@@ -353,12 +380,19 @@ struct GuiApp {
     start_time: Instant,
     audio_manager: Option<AudioManager>,
     input_state: Arc<Mutex<SharedInputState>>,
+    base_dir: PathBuf,
+    append_dirs: Vec<PathBuf>,
+    movie_backends: Vec<String>,
+    movie_stop_flags: Arc<Mutex<BTreeMap<(StagePlane, i32, u64), Arc<AtomicBool>>>>,
+    quake_ref_csv: Option<PathBuf>,
+    quake_ref_report: PathBuf,
+    quake_started_at: Option<Instant>,
+    quake_request: Option<siglus::vm::VmQuakeRequest>,
 }
-
 include!("app_logic.rs");
-
+include!("app_quake_reference.rs");
+include!("app_runtime_effects.rs");
 include!("app_render.rs");
-
 include!("app_tweet_dialog.rs");
 
 impl eframe::App for GuiApp {
@@ -497,6 +531,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
     let (selection_tx, selection_rx) = mpsc::channel::<i32>();
     let (return_to_menu_warning_tx, return_to_menu_warning_rx) = mpsc::channel::<bool>();
     let (advance_tx, advance_rx) = mpsc::channel::<AdvanceSignal>();
+    let (movie_event_tx, movie_event_rx) = mpsc::channel::<MoviePlaybackEvent>();
     let skip_mode = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
     let input_state = Arc::new(Mutex::new(SharedInputState::default()));
@@ -511,7 +546,9 @@ fn run_gui(args: RunConfig) -> Result<()> {
         .parent()
         .unwrap_or(&PathBuf::from("."))
         .to_path_buf();
-    let audio_manager = audio::AudioManager::new(base_dir).ok();
+    let audio_manager = audio::AudioManager::new(base_dir.clone()).ok();
+    let app_append_dirs = args.append_search_dirs.clone();
+    let cancel_se_map = load_cancel_se_map_from_gameexe(&args.gameexe);
 
     let _worker = thread::spawn(move || {
         let run = || -> Result<u64> {
@@ -524,6 +561,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 selection_rx,
                 return_to_menu_warning_rx,
                 advance_rx,
+                movie_event_rx,
                 skip_mode: worker_skip,
                 shutdown: worker_shutdown,
                 base_dir: args
@@ -534,9 +572,26 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 append_dirs: args.append_search_dirs.clone(),
                 persistent_state_path: args.persistent_state_path.clone(),
                 objects: BTreeMap::new(),
+                stage_object_sizes: BTreeMap::new(),
+                stage_group_sizes: BTreeMap::new(),
+                groups: BTreeMap::new(),
+                movie_playing_objects: std::collections::BTreeSet::new(),
+                movie_auto_free_ms: BTreeMap::new(),
+                movie_generations: BTreeMap::new(),
+                movie_last_failure: BTreeMap::new(),
+                next_movie_generation: 1,
+                global_mov_playing: false,
+                mwnd_list_size: 1,
+                world_list_size: 1,
+                effect_list_size: 0,
+                quake_list_size: 0,
+                int_event_list_sizes: BTreeMap::new(),
+                quake_active_until: None,
+                last_quake_request: None,
                 next_object_seq: 1,
                 int_events: std::collections::HashMap::new(),
                 input_state: worker_input_state,
+                cancel_se_map: cancel_se_map.clone(),
             };
 
             let state_in = match load_persistent_state(&args.persistent_state_path) {
@@ -593,12 +648,18 @@ fn run_gui(args: RunConfig) -> Result<()> {
         selection_tx.clone(),
         return_to_menu_warning_tx.clone(),
         advance_tx.clone(),
+        movie_event_tx.clone(),
         skip_mode.clone(),
         shutdown.clone(),
         args.title.clone(),
         args.scene_size,
         audio_manager,
         input_state,
+        base_dir.clone(),
+        app_append_dirs,
+        args.movie_backends.clone(),
+        args.quake_ref_csv.clone(),
+        args.quake_ref_report.clone(),
     );
 
     let mut native_options = eframe::NativeOptions::default();

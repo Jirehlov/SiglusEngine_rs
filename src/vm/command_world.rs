@@ -35,8 +35,24 @@ impl Vm {
         if element[0] == crate::elm::ELM_ARRAY {
             // Indexed: world_list[idx].sub
             if element.len() >= 2 {
-                let _idx = element[1];
-                let rest = if element.len() > 2 { &element[2..] } else { &[] };
+                let idx = element[1];
+                let size = host.on_world_list_get_size();
+                if size >= 0 && (idx < 0 || idx >= size) {
+                    if self.options.disp_out_of_range_error {
+                        host.on_error("範囲外のワールド番号が指定されました。(world_list)");
+                    }
+                    if ret_form == crate::elm::form::INT {
+                        self.stack.push_int(0);
+                    } else if ret_form == crate::elm::form::STR {
+                        self.stack.push_str(String::new());
+                    }
+                    return true;
+                }
+                let rest = if element.len() > 2 {
+                    &element[2..]
+                } else {
+                    &[]
+                };
                 return self.try_command_world(rest, arg_list_id, args, ret_form, host);
             }
             return true;
@@ -46,7 +62,8 @@ impl Vm {
             ELM_WORLDLIST_CREATE_WORLD => {
                 // C++ creates a new world, pushes its index.
                 host.on_world_create();
-                self.stack.push_int(0);
+                let idx = host.on_world_list_get_size().saturating_sub(1).max(0);
+                self.stack.push_int(idx);
                 true
             }
             ELM_WORLDLIST_DESTROY_WORLD => {
@@ -93,29 +110,60 @@ impl Vm {
             }
 
             // --- Camera scalar properties (get/set) ---
-            ELM_WORLD_CAMERA_EYE_X | ELM_WORLD_CAMERA_EYE_Y | ELM_WORLD_CAMERA_EYE_Z
-            | ELM_WORLD_CAMERA_PINT_X | ELM_WORLD_CAMERA_PINT_Y | ELM_WORLD_CAMERA_PINT_Z
-            | ELM_WORLD_CAMERA_UP_X | ELM_WORLD_CAMERA_UP_Y | ELM_WORLD_CAMERA_UP_Z
+            ELM_WORLD_CAMERA_EYE_X
+            | ELM_WORLD_CAMERA_EYE_Y
+            | ELM_WORLD_CAMERA_EYE_Z
+            | ELM_WORLD_CAMERA_PINT_X
+            | ELM_WORLD_CAMERA_PINT_Y
+            | ELM_WORLD_CAMERA_PINT_Z
+            | ELM_WORLD_CAMERA_UP_X
+            | ELM_WORLD_CAMERA_UP_Y
+            | ELM_WORLD_CAMERA_UP_Z
             | ELM_WORLD_CAMERA_VIEW_ANGLE
             | ELM_WORLD_MONO
-            | ELM_WORLD_ORDER | ELM_WORLD_LAYER
-            | ELM_WORLD_WIPE_COPY | ELM_WORLD_WIPE_ERASE => {
+            | ELM_WORLD_ORDER
+            | ELM_WORLD_LAYER
+            | ELM_WORLD_WIPE_COPY
+            | ELM_WORLD_WIPE_ERASE => {
                 if arg_list_id == 0 {
                     self.stack.push_int(0);
                 } else {
-                    host.on_world_property(sub, args.first().and_then(|p| match p.value {
-                        PropValue::Int(v) => Some(v),
-                        _ => None,
-                    }).unwrap_or(0));
+                    host.on_world_property(
+                        sub,
+                        args.first()
+                            .and_then(|p| match p.value {
+                                PropValue::Int(v) => Some(v),
+                                _ => None,
+                            })
+                            .unwrap_or(0),
+                    );
                 }
                 true
             }
 
             // --- Camera set helpers (3 args) ---
             ELM_WORLD_SET_CAMERA_EYE | ELM_WORLD_SET_CAMERA_PINT | ELM_WORLD_SET_CAMERA_UP => {
-                let x = args.first().and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
-                let y = args.get(1).and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
-                let z = args.get(2).and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
+                let x = args
+                    .first()
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let y = args
+                    .get(1)
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let z = args
+                    .get(2)
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
                 host.on_world_set_camera(sub, x, y, z);
                 true
             }
@@ -124,9 +172,27 @@ impl Vm {
             ELM_WORLD_CALC_CAMERA_EYE | ELM_WORLD_CALC_CAMERA_PINT => {
                 // C++ uses trig: sin/cos on distance/rotate params to compute camera pos.
                 // For now, accept — the actual calculation is done host-side or in a future pass.
-                let distance = args.first().and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
-                let rotate_h = args.get(1).and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
-                let rotate_v = args.get(2).and_then(|p| match p.value { PropValue::Int(v) => Some(v), _ => None }).unwrap_or(0);
+                let distance = args
+                    .first()
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let rotate_h = args
+                    .get(1)
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let rotate_v = args
+                    .get(2)
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
                 host.on_world_calc_camera(sub, distance, rotate_h, rotate_v);
                 true
             }
@@ -139,9 +205,15 @@ impl Vm {
             }
 
             // --- Camera event dispatchers ---
-            ELM_WORLD_CAMERA_EYE_X_EVE | ELM_WORLD_CAMERA_EYE_Y_EVE | ELM_WORLD_CAMERA_EYE_Z_EVE
-            | ELM_WORLD_CAMERA_PINT_X_EVE | ELM_WORLD_CAMERA_PINT_Y_EVE | ELM_WORLD_CAMERA_PINT_Z_EVE
-            | ELM_WORLD_CAMERA_UP_X_EVE | ELM_WORLD_CAMERA_UP_Y_EVE | ELM_WORLD_CAMERA_UP_Z_EVE => {
+            ELM_WORLD_CAMERA_EYE_X_EVE
+            | ELM_WORLD_CAMERA_EYE_Y_EVE
+            | ELM_WORLD_CAMERA_EYE_Z_EVE
+            | ELM_WORLD_CAMERA_PINT_X_EVE
+            | ELM_WORLD_CAMERA_PINT_Y_EVE
+            | ELM_WORLD_CAMERA_PINT_Z_EVE
+            | ELM_WORLD_CAMERA_UP_X_EVE
+            | ELM_WORLD_CAMERA_UP_Y_EVE
+            | ELM_WORLD_CAMERA_UP_Z_EVE => {
                 // C++ tnm_command_proc_int_event — route to int_event sub-router.
                 self.try_command_int_event(&element[1..], arg_list_id, args, _ret_form, host, sub)
             }

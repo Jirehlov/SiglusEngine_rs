@@ -69,6 +69,8 @@ impl Vm {
             frame_action: FrameAction::default(),
             frame_action_ch: Vec::new(),
             key_wait_proc: KeyWaitProc::default(),
+            group_wait_proc: GroupWaitProc::default(),
+            excall_allocated: [false; 2],
             flags_a: vec![0i32; FLAG_LIST_SIZE],
             flags_b: vec![0i32; FLAG_LIST_SIZE],
             flags_c: vec![0i32; FLAG_LIST_SIZE],
@@ -282,7 +284,7 @@ impl Vm {
         host: &mut dyn Host,
         provider: &mut dyn SceneProvider,
     ) -> Result<()> {
-        if !self.is_flick_scene_allowed() {
+        if !self.is_flick_scene_allowed(host) {
             return Ok(());
         }
         if self.options.flick_scene_routes.is_empty() {
@@ -316,7 +318,7 @@ impl Vm {
         Ok(())
     }
 
-    fn is_flick_scene_allowed(&self) -> bool {
+    fn is_flick_scene_allowed(&self, host: &mut dyn Host) -> bool {
         if self.game_timer_move_flag == 0 {
             return false;
         }
@@ -333,12 +335,12 @@ impl Vm {
         if hide_mwnd_active {
             return false;
         }
-        // TODO(C++: eng_frame.cpp::cancel_call_proc flick gating)
-        // Gap: movie/excall-specific gating (`m_mov.is_playing`, `tnm_excall_is_excall`) is
-        // not yet modelled in Rust VM state, so those early-return conditions are still missing.
-        // Expected behavior: when movie playback or excall proc is active, flick scene must not fire.
-        // Validation direction: build scene that toggles movie/excall lifecycle and verify no
-        // `FLICK_SCENE.*` farcall occurs during gated intervals.
+        if self.excall_allocated.iter().any(|v| *v) {
+            return false;
+        }
+        if host.on_movie_is_playing() {
+            return false;
+        }
         true
     }
 
@@ -398,6 +400,10 @@ impl Vm {
         while !self.lexer.is_eof() && !self.halted {
             self.run_flick_scene_proc(host, provider)?;
             if self.run_key_wait_proc(host) == KeyWaitTickResult::Pending {
+                host.on_wait_frame();
+                continue;
+            }
+            if self.run_group_wait_proc(host) {
                 host.on_wait_frame();
                 continue;
             }

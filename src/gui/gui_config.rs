@@ -19,6 +19,64 @@ pub(super) struct RunConfig {
     pub(super) load_wipe_time_ms: u64,
     pub(super) load_after_call: Option<(String, i32)>,
     pub(super) flick_scene_routes: Vec<siglus::vm::FlickSceneRoute>,
+    pub(super) movie_backends: Vec<String>,
+    pub(super) quake_ref_csv: Option<PathBuf>,
+    pub(super) quake_ref_report: PathBuf,
+}
+
+fn parse_movie_backends(cfg: &siglus::gameexe::GameexeConfig) -> Vec<String> {
+    let from_env = std::env::var("SIGLUS_MOVIE_BACKENDS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !from_env.is_empty() {
+        return from_env;
+    }
+
+    // 项目样本常见命名：MOVIE.BACKEND / SYSTEM.MOVIE.BACKEND
+    let from_gameexe = ["MOVIE.BACKEND", "SYSTEM.MOVIE.BACKEND"]
+        .iter()
+        .find_map(|key| cfg.first_values(key))
+        .map(|vals| {
+            vals.iter()
+                .flat_map(|v| v.split(','))
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !from_gameexe.is_empty() {
+        return from_gameexe;
+    }
+
+    vec![
+        "ffplay".to_string(),
+        "mpv".to_string(),
+        "gst-play-1.0".to_string(),
+    ]
+}
+
+fn parse_quake_reference_paths(base_dir: &Path) -> (Option<PathBuf>, PathBuf) {
+    let ref_csv = std::env::var_os("SIGLUS_QUAKE_REF_CSV")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let repo_default =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("reference/quake_baseline.csv");
+            if repo_default.exists() {
+                Some(repo_default)
+            } else {
+                None
+            }
+        });
+    let report = std::env::var_os("SIGLUS_QUAKE_REF_REPORT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base_dir.join("quake_ref_report.txt"));
+    (ref_csv, report)
 }
 
 fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>, Vec<String>) {
@@ -204,6 +262,8 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
 
     let load_after_call = cfg.load_after_call.clone();
     let flick_scene_routes = parse_flick_scene_routes(&cfg);
+    let movie_backends = parse_movie_backends(&cfg);
+    let (quake_ref_csv, quake_ref_report) = parse_quake_reference_paths(&base_dir);
 
     Ok(RunConfig {
         gameexe,
@@ -224,5 +284,8 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
         load_wipe_time_ms,
         load_after_call,
         flick_scene_routes,
+        movie_backends,
+        quake_ref_csv,
+        quake_ref_report,
     })
 }

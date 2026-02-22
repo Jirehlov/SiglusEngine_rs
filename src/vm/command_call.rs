@@ -160,6 +160,13 @@ impl Vm {
         }
     }
 
+    fn excall_slot_state(&self, slot: Option<usize>) -> bool {
+        match slot {
+            Some(i) if i < self.excall_allocated.len() => self.excall_allocated[i],
+            _ => self.excall_allocated.iter().any(|v| *v),
+        }
+    }
+
     /// Route `global.excall.<sub>`. Returns `true` if handled.
     pub(super) fn try_command_excall(
         &mut self,
@@ -169,6 +176,18 @@ impl Vm {
         ret_form: i32,
         host: &mut dyn Host,
     ) -> bool {
+        self.try_command_excall_with_slot(element, _arg_list_id, _args, ret_form, host, None)
+    }
+
+    fn try_command_excall_with_slot(
+        &mut self,
+        element: &[i32],
+        _arg_list_id: i32,
+        _args: &[Prop],
+        ret_form: i32,
+        host: &mut dyn Host,
+        excall_slot: Option<usize>,
+    ) -> bool {
         use crate::elm::excall::*;
         if element.is_empty() {
             return true;
@@ -177,26 +196,41 @@ impl Vm {
             x if x == crate::elm::ELM_ARRAY => {
                 // excall[0] / excall[1] dispatch
                 if element.len() > 2 {
-                    return self.try_command_excall(
+                    let slot = usize::try_from(element[1]).ok();
+                    return self.try_command_excall_with_slot(
                         &element[2..],
                         _arg_list_id,
                         _args,
                         ret_form,
                         host,
+                        slot,
                     );
                 }
                 true
             }
-            ELM_EXCALL_ALLOC | ELM_EXCALL_FREE => {
-                // accept
+            ELM_EXCALL_ALLOC => {
+                // C++ cmd_call.cpp: alloc flips the addressed excall active bit.
+                if let Some(i) = excall_slot.filter(|i| *i < self.excall_allocated.len()) {
+                    self.excall_allocated[i] = true;
+                } else {
+                    self.excall_allocated.fill(true);
+                }
+                true
+            }
+            ELM_EXCALL_FREE => {
+                if let Some(i) = excall_slot.filter(|i| *i < self.excall_allocated.len()) {
+                    self.excall_allocated[i] = false;
+                } else {
+                    self.excall_allocated.fill(false);
+                }
                 true
             }
             ELM_EXCALL_IS_EXCALL => {
-                self.stack.push_int(0);
+                self.stack.push_int(self.excall_slot_state(excall_slot) as i32);
                 true
             }
             ELM_EXCALL_CHECK_ALLOC => {
-                self.stack.push_int(0);
+                self.stack.push_int(self.excall_slot_state(excall_slot) as i32);
                 true
             }
             ELM_EXCALL_F => {
@@ -227,9 +261,23 @@ impl Vm {
                 true
             }
             ELM_EXCALL_STAGE | ELM_EXCALL_FRONT | ELM_EXCALL_BACK | ELM_EXCALL_NEXT => {
-                // Delegate to stage; for now accept
+                // Delegate to stage.
                 if element.len() > 1 {
-                    if self.try_command_stage(&element[1..], _arg_list_id, _args, ret_form, host) {
+                    let stage_idx = if element[0] == ELM_EXCALL_FRONT {
+                        1
+                    } else if element[0] == ELM_EXCALL_NEXT {
+                        2
+                    } else {
+                        0
+                    };
+                    if self.try_command_stage(
+                        stage_idx,
+                        &element[1..],
+                        _arg_list_id,
+                        _args,
+                        ret_form,
+                        host,
+                    ) {
                         return true;
                     }
                 }

@@ -59,8 +59,9 @@ impl GuiHost {
         cmd: i32,
         args: &[siglus::vm::Prop],
     ) {
-                if cmd == siglus::elm::objectlist::ELM_STAGE_CREATE_OBJECT {
+        if cmd == siglus::elm::objectlist::ELM_STAGE_CREATE_OBJECT {
             let requested = args.first().and_then(|p| p.as_int()).unwrap_or(0).max(0) as i32;
+            self.stage_object_sizes.insert(plane, requested);
             for idx in 0..requested {
                 let _ = self.get_or_create_object_state(plane, idx);
             }

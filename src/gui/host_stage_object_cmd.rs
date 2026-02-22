@@ -1,4 +1,97 @@
 impl GuiHost {
+    pub(super) fn drain_movie_playback_events(&mut self) {
+        while let Ok(evt) = self.movie_event_rx.try_recv() {
+            match evt {
+                MoviePlaybackEvent::ObjectStarted {
+                    stage,
+                    index,
+                    generation,
+                } => {
+                    if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
+                        self.movie_playing_objects.insert((stage, index));
+                        self.movie_last_failure.remove(&(stage, index));
+                    }
+                }
+                MoviePlaybackEvent::ObjectFinished {
+                    stage,
+                    index,
+                    generation,
+                } => {
+                    if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
+                        self.movie_playing_objects.remove(&(stage, index));
+                        self.movie_last_failure.remove(&(stage, index));
+                    }
+                }
+                MoviePlaybackEvent::ObjectFailed {
+                    stage,
+                    index,
+                    generation,
+                    info,
+                } => {
+                    if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
+                        self.movie_playing_objects.remove(&(stage, index));
+                        self.movie_last_failure.insert((stage, index), info.clone());
+                        log::warn!(
+                            "movie failed stage={:?} index={} generation={} category={:?} backend={:?} unrecoverable={} detail={} counters=({}, {}, {})",
+                            stage,
+                            index,
+                            generation,
+                            info.category,
+                            info.backend,
+                            info.unrecoverable,
+                            info.detail,
+                            info.spawn_fail,
+                            info.wait_fail,
+                            info.exit_fail
+                        );
+                    }
+                }
+                MoviePlaybackEvent::ObjectInterrupted {
+                    stage,
+                    index,
+                    generation,
+                } => {
+                    if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
+                        self.movie_playing_objects.remove(&(stage, index));
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn play_cancel_se(&mut self, se_no: i32) {
+        if se_no < 0 {
+            return;
+        }
+        if let Some(mapped) = self.cancel_se_map.get(&se_no).cloned() {
+            let _ = self.event_tx.send(HostEvent::PlaySe { name: mapped });
+            return;
+        }
+        let candidates = [
+            format!("SE_{:03}", se_no),
+            format!("se_{:03}", se_no),
+            format!("se{:03}", se_no),
+            format!("sys_se_{:03}", se_no),
+            format!("{:03}", se_no),
+        ];
+        let exts = ["ogg", "wav", "mp3", "flac"];
+        for name in candidates {
+            let found = exts.iter().any(|ext| {
+                let direct = self.base_dir.join(format!("{name}.{ext}"));
+                let se_dir = self.base_dir.join("SE").join(format!("{name}.{ext}"));
+                direct.exists() || se_dir.exists()
+            });
+            if found {
+                let _ = self.event_tx.send(HostEvent::PlaySe { name });
+                return;
+            }
+        }
+    }
+
+    pub(super) fn refresh_movie_lifecycle(&mut self) {
+        self.drain_movie_playback_events();
+    }
+
     pub(super) fn apply_object_command(
         &mut self,
         plane: StagePlane,
@@ -6,7 +99,8 @@ impl GuiHost {
         cmd: i32,
         args: &[siglus::vm::Prop],
     ) {
-        
+        self.refresh_movie_lifecycle();
+
         match cmd {
             x if x == siglus::elm::objectlist::ELM_OBJECT_CHANGE_FILE => {
                 if let Some(siglus::vm::Prop {
@@ -284,6 +378,10 @@ impl GuiHost {
             x if x == siglus::elm::objectlist::ELM_OBJECT_FREE || x == siglus::elm::objectlist::ELM_OBJECT_INIT => {
                 let st = self.get_or_create_object_state(plane, object_index);
                 reset_object_state_preserve_seq(st);
+                self.movie_playing_objects.remove(&(plane, object_index));
+                self.movie_generations.remove(&(plane, object_index));
+                self.movie_auto_free_ms.remove(&(plane, object_index));
+                self.movie_last_failure.remove(&(plane, object_index));
                 let _ = self.event_tx.send(HostEvent::SetObjectVisible {
                     stage: plane,
                     index: object_index,
@@ -293,6 +391,102 @@ impl GuiHost {
                     stage: plane,
                     index: object_index,
                 });
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_RESUME_MOVIE => {
+                self.movie_playing_objects.insert((plane, object_index));
+                let duration_ms = self
+                    .movie_auto_free_ms
+                    .get(&(plane, object_index))
+                    .copied()
+                    .unwrap_or(3_000)
+                    .max(1);
+                let generation = self.next_movie_generation;
+                self.next_movie_generation = self.next_movie_generation.saturating_add(1);
+                self.movie_generations.insert((plane, object_index), generation);
+                self.movie_last_failure.remove(&(plane, object_index));
+                let file_name = self
+                    .objects
+                    .get(&(plane, object_index))
+                    .map(|o| o.file_name.clone())
+                    .unwrap_or_default();
+                let _ = self.event_tx.send(HostEvent::PlayObjectMovie {
+                    stage: plane,
+                    index: object_index,
+                    file_name,
+                    duration_ms,
+                    generation,
+                });
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_PAUSE_MOVIE
+                || x == siglus::elm::objectlist::ELM_OBJECT_END_MOVIE_LOOP =>
+            {
+                self.movie_playing_objects.remove(&(plane, object_index));
+                let generation = self
+                    .movie_generations
+                    .remove(&(plane, object_index))
+                    .unwrap_or(0);
+                let _ = self.event_tx.send(HostEvent::StopObjectMovie {
+                    stage: plane,
+                    index: object_index,
+                    generation,
+                });
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE
+                || x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE_KEY =>
+            {
+                while self.movie_playing_objects.contains(&(plane, object_index)) {
+                    if self.shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    self.refresh_movie_lifecycle();
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                }
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_LOOP
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT_KEY =>
+            {
+                let file_name = args
+                    .first()
+                    .and_then(|p| match &p.value {
+                        siglus::vm::PropValue::Str(v) => Some(v.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let resolved_name = {
+                    let state = self.get_or_create_object_state(plane, object_index);
+                    if !file_name.is_empty() {
+                        state.file_name = file_name;
+                    }
+                    state.file_name.clone()
+                };
+                let duration_ms = self
+                    .movie_auto_free_ms
+                    .get(&(plane, object_index))
+                    .copied()
+                    .unwrap_or(3_000)
+                    .max(1);
+                let generation = self.next_movie_generation;
+                self.next_movie_generation = self.next_movie_generation.saturating_add(1);
+                self.movie_generations.insert((plane, object_index), generation);
+                self.movie_playing_objects.insert((plane, object_index));
+                self.movie_last_failure.remove(&(plane, object_index));
+                let _ = self.event_tx.send(HostEvent::PlayObjectMovie {
+                    stage: plane,
+                    index: object_index,
+                    file_name: resolved_name,
+                    duration_ms,
+                    generation,
+                });
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_MOVIE_AUTO_FREE => {
+                let ms = args
+                    .first()
+                    .and_then(|p| p.as_int())
+                    .unwrap_or(3_000)
+                    .max(1);
+                self.movie_auto_free_ms.insert((plane, object_index), ms);
             }
             _ => {
                 if is_object_file_create_command(cmd) {

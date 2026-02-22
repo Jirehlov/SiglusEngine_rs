@@ -55,6 +55,30 @@ pub struct VmLoadFlowState {
     pub do_load_after_call_flag: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmQuakeKind {
+    Vec,
+    Dir,
+    Zoom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmQuakeRequest {
+    pub sub: i32,
+    pub kind: VmQuakeKind,
+    pub time_ms: i32,
+    pub cnt: i32,
+    pub end_cnt: i32,
+    pub begin_order: i32,
+    pub end_order: i32,
+    pub wait_flag: bool,
+    pub key_flag: bool,
+    pub power: i32,
+    pub vec: i32,
+    pub center_x: i32,
+    pub center_y: i32,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct VmInputButtonState {
     pub on_down: bool,
@@ -360,6 +384,11 @@ pub trait Host {
         false
     }
 
+    /// C++ eng_frame.cpp flick gating (`m_mov.is_playing`).
+    fn on_movie_is_playing(&mut self) -> bool {
+        false
+    }
+
     // ---------------------------------------------------------------
     // Screen / Effect / Quake Host callbacks (cmd_effect.cpp alignment)
     // ---------------------------------------------------------------
@@ -373,11 +402,16 @@ pub trait Host {
     /// C++ cmd_effect.cpp: effect reinit.
     fn on_effect_init(&mut self) {}
 
-    /// C++ cmd_effect.cpp: quake start (sub identifies variant).
-    fn on_quake_start(&mut self, _sub: i32) {}
+    /// C++ cmd_effect.cpp: quake start (vec/dir/zoom variants).
+    fn on_quake_start(&mut self, _req: VmQuakeRequest) {}
 
     /// C++ cmd_effect.cpp: quake end.
     fn on_quake_end(&mut self) {}
+
+    /// C++ cmd_effect.cpp: quake->check() for WAIT/CHECK polling branches.
+    fn on_quake_is_active(&mut self) -> bool {
+        false
+    }
 
     // ---------------------------------------------------------------
     // World Host callbacks (cmd_world.cpp alignment)
@@ -435,26 +469,95 @@ pub trait Host {
     // Stage / Group Host callbacks (cmd_stage.cpp alignment)
     // ---------------------------------------------------------------
 
+    /// C++ cmd_stage.cpp: stage_list->get_sub(index, disp_out_of_range_error).
+    ///
+    /// Return negative when stage count is unknown.
+    fn on_stage_list_get_size(&mut self) -> i32 {
+        -1
+    }
+
     /// C++ cmd_stage.cpp: group sel / sel_cancel.
-    fn on_group_sel(&mut self, _sub: i32) {}
+    fn on_group_sel(&mut self, _stage_idx: i32, _group_idx: i32, _sub: i32) {}
+
+    /// C++ cmd_stage.cpp: SEL/START cancel branch flags.
+    fn on_group_set_cancel(
+        &mut self,
+        _stage_idx: i32,
+        _group_idx: i32,
+        _enabled: bool,
+        _se_no: i32,
+    ) {
+    }
 
     /// C++ cmd_stage.cpp: group init (reinit).
-    fn on_group_init(&mut self) {}
+    fn on_group_init(&mut self, _stage_idx: i32, _group_idx: i32) {}
 
     /// C++ cmd_stage.cpp: group start / start_cancel.
-    fn on_group_start(&mut self, _sub: i32) {}
+    fn on_group_start(&mut self, _stage_idx: i32, _group_idx: i32, _sub: i32) {}
 
     /// C++ cmd_stage.cpp: group end.
-    fn on_group_end(&mut self) {}
+    fn on_group_end(&mut self, _stage_idx: i32, _group_idx: i32) {}
 
     /// C++ cmd_stage.cpp: group_list alloc (clear + resize).
-    fn on_group_alloc(&mut self, _count: i32) {}
+    fn on_group_alloc(&mut self, _stage_idx: i32, _count: i32) {}
 
     /// C++ cmd_stage.cpp: group_list free (clear).
-    fn on_group_free(&mut self) {}
+    fn on_group_free(&mut self, _stage_idx: i32) {}
+
+    /// C++ cmd_stage.cpp: group_list->get_sub(index, disp_out_of_range_error).
+    ///
+    /// Return negative when the host cannot provide a concrete size yet.
+    fn on_group_list_get_size(&mut self, _stage_idx: i32) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_mwnd.cpp: mwnd_list->get_sub(index, disp_out_of_range_error).
+    fn on_mwnd_list_get_size(&mut self) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_world.cpp: world_list->get_sub(index, disp_out_of_range_error).
+    fn on_world_list_get_size(&mut self) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_effect.cpp: effect_list->get_sub(index, disp_out_of_range_error).
+    fn on_effect_list_get_size(&mut self) -> i32 {
+        -1
+    }
+    fn on_effect_list_resize(&mut self, _size: i32) {}
+
+    /// C++ cmd_effect.cpp: quake_list->get_sub(index, disp_out_of_range_error).
+    fn on_quake_list_get_size(&mut self) -> i32 {
+        -1
+    }
+    fn on_quake_list_resize(&mut self, _size: i32) {}
+
+    /// C++ cmd_others.cpp: int_event_list->get_sub(index, disp_out_of_range_error).
+    fn on_int_event_list_get_size(&mut self, _owner_id: i32) -> i32 {
+        -1
+    }
+    fn on_int_event_list_resize(&mut self, _owner_id: i32, _size: i32) {}
+
+    /// C++ cmd_stage.cpp: group property/query get.
+    fn on_group_get(&mut self, _stage_idx: i32, _group_idx: i32, _query_id: i32) -> i32 {
+        -1
+    }
 
     /// C++ cmd_stage.cpp: group property set (order/layer/cancel_priority).
-    fn on_group_property(&mut self, _property_id: i32, _value: i32) {}
+    fn on_group_property(
+        &mut self,
+        _stage_idx: i32,
+        _group_idx: i32,
+        _property_id: i32,
+        _value: i32,
+    ) {
+    }
+
+    /// C++ cmd_stage.cpp SEL_BTN_OBJ proc-style polling.
+    fn on_group_wait_result(&mut self, _stage_idx: i32, _group_idx: i32) -> Option<i32> {
+        None
+    }
 
     // ---------------------------------------------------------------
     // int_event Host callbacks (cmd_others.cpp alignment)
@@ -526,14 +629,57 @@ pub trait Host {
         _obj_index: i32,
         _property_id: i32,
         _value: i32,
+        _stage_idx: Option<i32>,
     ) {
+    }
+    /// C++ cmd_object.cpp: object_list->get_sub(index, disp_out_of_range_error).
+    ///
+    /// Return negative when the host cannot provide a concrete size yet.
+    fn on_object_list_get_size(&mut self, _list_id: i32, _stage_idx: Option<i32>) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_object.cpp: `if (!p_obj->is_use()) {}` early-return branch.
+    fn on_object_is_use(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _stage_idx: Option<i32>,
+    ) -> bool {
+        true
     }
 
     /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
-    fn on_object_action(&mut self, _list_id: i32, _obj_index: i32, _sub_id: i32, _args: &[Prop]) {}
+    fn on_object_action(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) {
+    }
 
     /// C++ cmd_object.cpp: object property get.
-    fn on_object_get(&mut self, _list_id: i32, _obj_index: i32, _sub_id: i32) -> i32 {
+    fn on_object_get(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        0
+    }
+
+    /// C++ cmd_object.cpp: int-returning action lane with argument payload (e.g. `__iapp_dummy`).
+    fn on_object_query(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) -> i32 {
         0
     }
 

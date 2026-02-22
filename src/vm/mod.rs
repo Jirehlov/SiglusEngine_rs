@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::{dat::SceneDat, lexer::SceneLexer, stack::IfcStack};
 
@@ -83,6 +83,9 @@ pub struct VmOptions {
     pub load_after_call_z_no: i32,
     /// C++ tnm_ini.cpp: FLICK_SCENE routing table.
     pub flick_scene_routes: Vec<FlickSceneRoute>,
+    /// C++ S_tnm_command_proc_arg_struct::disp_out_of_range_error equivalent.
+    /// When false, out-of-range element access returns defaults without emitting VM error text.
+    pub disp_out_of_range_error: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +121,7 @@ impl Default for VmOptions {
             load_after_call_scene: None,
             load_after_call_z_no: 0,
             flick_scene_routes: Vec::new(),
+            disp_out_of_range_error: true,
         }
     }
 }
@@ -183,6 +187,13 @@ struct FrameAction {
 struct KeyWaitProc {
     active: bool,
     force_skip_disable: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GroupWaitProc {
+    active: bool,
+    stage_idx: i32,
+    group_idx: i32,
 }
 
 impl Default for FrameAction {
@@ -291,6 +302,9 @@ struct VmLocalState {
     frame_action: FrameAction,
     frame_action_ch: Vec<FrameAction>,
     key_wait_proc: KeyWaitProc,
+    group_wait_proc: GroupWaitProc,
+    // C++ cmd_call.cpp excall allocation state (`excall.is_excall/check_alloc`).
+    excall_allocated: [bool; 2],
     flags_a: Vec<i32>,
     flags_b: Vec<i32>,
     flags_c: Vec<i32>,
@@ -420,6 +434,9 @@ pub struct Vm {
     frame_action: FrameAction,
     frame_action_ch: Vec<FrameAction>,
     key_wait_proc: KeyWaitProc,
+    group_wait_proc: GroupWaitProc,
+    // C++ cmd_call.cpp excall allocation state (`excall.is_excall/check_alloc`).
+    excall_allocated: [bool; 2],
 
     // ----- Flag system (mirrors C++ Gp_flag) -----
     flags_a: Vec<i32>,

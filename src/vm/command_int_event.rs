@@ -111,7 +111,11 @@ impl Vm {
             // --- check ---
             ELM_INTEVENT_CHECK => {
                 // C++ tnm_stack_push_int(p_int_event->check_event() ? 1 : 0)
-                self.stack.push_int(if host.on_int_event_check(owner_id) { 1 } else { 0 });
+                self.stack.push_int(if host.on_int_event_check(owner_id) {
+                    1
+                } else {
+                    0
+                });
                 true
             }
 
@@ -165,9 +169,32 @@ impl Vm {
         if element[0] == crate::elm::ELM_ARRAY {
             // Indexed: event_list[idx].sub
             if element.len() >= 2 {
-                let _idx = element[1];
-                let rest = if element.len() > 2 { &element[2..] } else { &[] };
-                return self.try_command_int_event(rest, arg_list_id, args, ret_form, host, owner_id);
+                let idx = element[1];
+                let size = host.on_int_event_list_get_size(owner_id);
+                if size >= 0 && (idx < 0 || idx >= size) {
+                    if self.options.disp_out_of_range_error {
+                        host.on_error("範囲外のイベント番号が指定されました。(int_event_list)");
+                    }
+                    if ret_form == crate::elm::form::INT {
+                        self.stack.push_int(0);
+                    } else if ret_form == crate::elm::form::STR {
+                        self.stack.push_str(String::new());
+                    }
+                    return true;
+                }
+                let rest = if element.len() > 2 {
+                    &element[2..]
+                } else {
+                    &[]
+                };
+                return self.try_command_int_event(
+                    rest,
+                    arg_list_id,
+                    args,
+                    ret_form,
+                    host,
+                    owner_id,
+                );
             }
             // bare indexed access — get/set value
             if ret_form == crate::elm::form::INT {
@@ -178,7 +205,15 @@ impl Vm {
 
         if element[0] == crate::elm::intevent::ELM_INTEVENTLIST_RESIZE {
             // C++ p_int_event_list->resize(arg0)
-            // accept — host manages event list storage
+            let n = args
+                .first()
+                .and_then(|p| match p.value {
+                    PropValue::Int(v) => Some(v),
+                    _ => None,
+                })
+                .unwrap_or(0)
+                .max(0);
+            host.on_int_event_list_resize(owner_id, n);
             true
         } else {
             host.on_error("無効なコマンドが指定されました。(inteventlist)");

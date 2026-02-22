@@ -1,3 +1,5 @@
+macro_rules! impl_host_input_methods {
+    () => {
 fn on_input_clear(&mut self) {
     if let Ok(mut st) = self.input_state.lock() {
         st.clear_all();
@@ -98,4 +100,6 @@ fn on_input_consume_left_flick_stock(&mut self) -> bool {
         Ok(mut st) => st.consume_left_flick_stock(),
         Err(_) => false,
     }
+}
+    };
 }

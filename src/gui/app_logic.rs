@@ -4,18 +4,25 @@ impl GuiApp {
         selection_tx: mpsc::Sender<i32>,
         return_to_menu_warning_tx: mpsc::Sender<bool>,
         advance_tx: mpsc::Sender<AdvanceSignal>,
+        movie_event_tx: mpsc::Sender<MoviePlaybackEvent>,
         skip_mode: Arc<AtomicBool>,
         shutdown: Arc<AtomicBool>,
         base_title: String,
         scene_size: Option<(i32, i32)>,
         audio_manager: Option<AudioManager>,
         input_state: Arc<Mutex<SharedInputState>>,
+        base_dir: PathBuf,
+        append_dirs: Vec<PathBuf>,
+        movie_backends: Vec<String>,
+        quake_ref_csv: Option<PathBuf>,
+        quake_ref_report: PathBuf,
     ) -> Self {
-        Self {
+        let mut app = Self {
             event_rx,
             selection_tx,
             return_to_menu_warning_tx,
             advance_tx,
+            movie_event_tx,
             skip_mode,
             shutdown,
             current_name: String::new(),
@@ -60,7 +67,17 @@ impl GuiApp {
             start_time: Instant::now(),
             audio_manager,
             input_state,
-        }
+            base_dir,
+            append_dirs,
+            movie_backends,
+            movie_stop_flags: Arc::new(Mutex::new(BTreeMap::new())),
+            quake_ref_csv,
+            quake_ref_report,
+            quake_started_at: None,
+            quake_request: None,
+        };
+        app.run_quake_reference_validation();
+        app
     }
 
     fn stage_transform(&self, screen: egui::Rect) -> (egui::Rect, f32, f32) {
@@ -362,6 +379,30 @@ impl GuiApp {
                     if let Some(am) = &mut self.audio_manager {
                         am.stop_pcmch(ch);
                     }
+                }
+                HostEvent::PlayObjectMovie {
+                    stage,
+                    index,
+                    file_name,
+                    duration_ms,
+                    generation,
+                } => {
+                    self.handle_object_movie_play(stage, index, file_name, duration_ms, generation)
+                },
+                HostEvent::StopObjectMovie {
+                    stage,
+                    index,
+                    generation,
+                } => {
+                    self.request_stop_movie_process(stage, index, generation);
+                }
+                HostEvent::StartQuake { req, started_at } => {
+                    self.quake_request = Some(req);
+                    self.quake_started_at = Some(started_at);
+                }
+                HostEvent::EndQuake => {
+                    self.quake_request = None;
+                    self.quake_started_at = None;
                 }
             }
         }

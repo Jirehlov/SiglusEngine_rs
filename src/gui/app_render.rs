@@ -1,7 +1,13 @@
 impl GuiApp {
     fn draw_background(&self, ui: &mut egui::Ui) {
         let screen = ui.max_rect();
-        let (rect, _, _) = self.stage_transform(screen);
+        let (mut rect, stage_scale_x, stage_scale_y) = self.stage_transform(screen);
+        let (qx, qy, qz, quake_cx, quake_cy) = self.quake_transform_for_order(0);
+        let center = egui::pos2(
+            rect.center().x + qx + (1.0 - qz) * quake_cx * stage_scale_x,
+            rect.center().y + qy + (1.0 - qz) * quake_cy * stage_scale_y,
+        );
+        rect = egui::Rect::from_center_size(center, egui::vec2(rect.width() * qz, rect.height() * qz));
 
         ui.painter()
             .rect_filled(screen, 0.0, egui::Color32::from_rgb(8, 8, 16));
@@ -59,7 +65,7 @@ impl GuiApp {
     }
 
     fn draw_objects(&self, ui: &mut egui::Ui) {
-        let (stage_rect, stage_scale_x, stage_scale_y) = self.stage_transform(ui.max_rect());
+        let (base_stage_rect, stage_scale_x, stage_scale_y) = self.stage_transform(ui.max_rect());
         let mut keys: Vec<(StagePlane, i32)> = self
             .object_textures
             .keys()
@@ -79,6 +85,18 @@ impl GuiApp {
             if !self.object_visible.get(&key).copied().unwrap_or(true) {
                 continue;
             }
+            let (order, layer, _seq) = self.object_sort.get(&key).copied().unwrap_or((0, 0, 0));
+            let (qx, qy, qz, quake_cx, quake_cy) = self.quake_transform_for_order(order);
+            let quake_center = egui::pos2(
+                base_stage_rect.center().x + qx + (1.0 - qz) * quake_cx * stage_scale_x,
+                base_stage_rect.center().y + qy + (1.0 - qz) * quake_cy * stage_scale_y,
+            );
+            let stage_rect = egui::Rect::from_center_size(
+                quake_center,
+                egui::vec2(base_stage_rect.width() * qz, base_stage_rect.height() * qz),
+            );
+            let _ = layer;
+
             let render = self
                 .object_render
                 .get(&key)
@@ -661,96 +679,5 @@ impl GuiApp {
         }
     }
 
-    fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
-        let screen = ui.max_rect();
-
-        // LOG button at top-left
-        let btn_rect = egui::Rect::from_min_size(
-            egui::pos2(screen.left() + 12.0, screen.top() + 12.0),
-            egui::vec2(40.0, 28.0),
-        );
-        let resp = ui.allocate_rect(btn_rect, egui::Sense::click());
-        let btn_bg = if resp.hovered() {
-            egui::Color32::from_rgba_premultiplied(60, 80, 120, 160)
-        } else {
-            egui::Color32::from_rgba_premultiplied(30, 40, 60, 100)
-        };
-        ui.painter().rect_filled(btn_rect, 4.0, btn_bg);
-        let icon_font = egui::FontId::proportional(13.0);
-        let icon_galley = ui.painter().layout_no_wrap(
-            "LOG".to_string(),
-            icon_font,
-            egui::Color32::from_rgba_premultiplied(180, 190, 210, 180),
-        );
-        ui.painter().galley(
-            egui::pos2(
-                btn_rect.center().x - icon_galley.size().x / 2.0,
-                btn_rect.center().y - icon_galley.size().y / 2.0,
-            ),
-            icon_galley,
-            egui::Color32::WHITE,
-        );
-        if resp.clicked() && self.msg_back_display_enabled {
-            self.show_backlog = !self.show_backlog;
-        }
-
-        // Skip indicator (shows when Ctrl is held)
-        if self.skip_mode.load(Ordering::Relaxed) {
-            let skip_font = egui::FontId::proportional(13.0);
-            let skip_galley = ui.painter().layout_no_wrap(
-                "SKIP ▶▶".to_string(),
-                skip_font,
-                egui::Color32::from_rgba_premultiplied(255, 200, 100, 220),
-            );
-            ui.painter().galley(
-                egui::pos2(screen.left() + 60.0, screen.top() + 16.0),
-                skip_galley,
-                egui::Color32::WHITE,
-            );
-        }
-
-        // Error display removed as per request. Errors are now logged to terminal.
-    }
-
-
-    fn draw_wipe_overlay(&self, ui: &mut egui::Ui) {
-        let Some(started) = self.wipe_started_at else {
-            return;
-        };
-        let duration = self.wipe_duration_ms.max(1) as f32;
-        let elapsed_ms = (Instant::now() - started).as_secs_f32() * 1000.0;
-        if elapsed_ms >= duration {
-            return;
-        }
-        let p = (elapsed_ms / duration).clamp(0.0, 1.0);
-
-        // C++ wipe direction semantics:
-        // - Normal:    script-level wipe/mask_wipe → flash overlay (0→peak→0)
-        // - SystemIn:  TNM_WIPE_RANGE_SYSTEM_IN  → fade *from* black (opaque→transparent)
-        // - SystemOut: TNM_WIPE_RANGE_SYSTEM_OUT → fade *to* black   (transparent→opaque)
-        let ramp = match self.wipe_direction {
-            WipeDirection::SystemIn => 1.0 - p,
-            WipeDirection::SystemOut => p,
-            WipeDirection::Normal => {
-                if p < 0.5 { p * 2.0 } else { (1.0 - p) * 2.0 }
-            }
-        };
-        let alpha = (ramp * 255.0).clamp(0.0, 255.0) as u8;
-        if alpha == 0 {
-            return;
-        }
-        // System wipes are always black; normal wipes use wipe_type color families.
-        let color = match self.wipe_direction {
-            WipeDirection::SystemIn | WipeDirection::SystemOut => {
-                egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha)
-            }
-            WipeDirection::Normal => match self.wipe_type.rem_euclid(4) {
-                0 => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
-                1 => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
-                2 => egui::Color32::from_rgba_premultiplied(0, 0, 64, alpha),
-                _ => egui::Color32::from_rgba_premultiplied(32, 0, 0, alpha),
-            },
-        };
-        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
-    }
+    impl_app_render_overlay!();
 }
