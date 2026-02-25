@@ -9,7 +9,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use widestring::U16String;
 
 use crate::{angou, lzss};
@@ -318,11 +318,7 @@ fn scn_data_blob_end(header: &PackHeader, scn_data_pairs: &[(i32, i32)]) -> Opti
     }
     let base = header.scn_data_list_ofs as i64;
     let end = base + max_end;
-    if end <= 0 {
-        None
-    } else {
-        Some(end as usize)
-    }
+    if end <= 0 { None } else { Some(end as usize) }
 }
 
 /// Try to find the exe-angou key from a PCK file's original-sources (OS) segment.

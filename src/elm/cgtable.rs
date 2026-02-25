@@ -19,3 +19,13 @@ pub const ELM_CGTABLE_GET_LOOK_PERCENT: i32 = 6; // get_look_percent
 pub const ELM_CGTABLE_SET_DISABLE: i32 = 7; // set_disable
 pub const ELM_CGTABLE_SET_ENABLE: i32 = 8; // set_enable
 pub const ELM_CGTABLE_GET_NAME_BY_FLAG_NO: i32 = 10; // get_name_by_flag_no
+
+// Extended constants aligned to C++ tnm_cg_table.cpp group-code API surface
+pub const ELM_CGTABLE_GET_FLAG_NO_BY_GROUP_CODE: i32 = 11; // get_flag_no_by_group_code
+pub const ELM_CGTABLE_GET_NAME_BY_GROUP_CODE: i32 = 12; // get_name_by_group_code
+pub const ELM_CGTABLE_GET_LOOK_BY_GROUP_CODE: i32 = 13; // get_look_by_group_code
+pub const ELM_CGTABLE_SET_LOOK_BY_GROUP_CODE: i32 = 14; // set_look_by_group_code
+pub const ELM_CGTABLE_GET_ONE_CODE_BY_GROUP_CODE: i32 = 15; // get_one_code_by_group_code
+pub const ELM_CGTABLE_GET_GROUP_MEMBER_CNT: i32 = 16; // get_group_member_cnt
+pub const ELM_CGTABLE_GET_GROUP_MEMBER_LOOK_CNT: i32 = 17; // get_group_member_look_cnt
+pub const ELM_CGTABLE_SET_GROUP_MEMBER_FLAG: i32 = 18; // set_group_member_flag

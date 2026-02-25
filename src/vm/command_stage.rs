@@ -15,6 +15,31 @@
 use super::*;
 
 impl Vm {
+    fn stage_arg_str(args: &[Prop], idx: usize) -> String {
+        match args.get(idx).map(|p| &p.value) {
+            Some(PropValue::Str(v)) => v.clone(),
+            Some(PropValue::Int(v)) => v.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    fn stage_report_file_not_found(
+        host: &mut dyn Host,
+        path: &str,
+        tag: &str,
+        kind: VmResourceKind,
+    ) {
+        if path.is_empty() {
+            return;
+        }
+        if !host.on_resource_exists_with_kind(path, kind) {
+            host.on_error_file_not_found(&format!(
+                "ファイル \"{}\" が見つかりません。({})",
+                path, tag
+            ));
+        }
+    }
+
     fn enqueue_group_wait_proc(&mut self, stage_idx: i32, group_idx: i32) {
         self.group_wait_proc.active = true;
         self.group_wait_proc.stage_idx = stage_idx;
@@ -69,7 +94,7 @@ impl Vm {
                 let stage_size = host.on_stage_list_get_size();
                 if stage_size >= 0 && (stage_idx < 0 || stage_idx >= stage_size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のステージ番号が指定されました。(stage_list)");
+                        host.on_error_fatal("範囲外のステージ番号が指定されました。(stage_list)");
                     }
                     return true;
                 }
@@ -83,7 +108,7 @@ impl Vm {
             return true;
         }
 
-        host.on_error("無効なコマンドが指定されました。(stage_list)");
+        host.on_error_fatal("無効なコマンドが指定されました。(stage_list)");
         true
     }
 
@@ -164,10 +189,19 @@ impl Vm {
             ELM_STAGE_BTNSELITEM => false,
 
             // Create object / create mwnd — host passthrough.
-            ELM_STAGE_CREATE_OBJECT | ELM_STAGE_CREATE_MWND => false,
+            ELM_STAGE_CREATE_OBJECT | ELM_STAGE_CREATE_MWND => {
+                let path = Self::stage_arg_str(args, 0);
+                let tag = if sub == ELM_STAGE_CREATE_OBJECT {
+                    "stage.create_object"
+                } else {
+                    "stage.create_mwnd"
+                };
+                Self::stage_report_file_not_found(host, &path, tag, VmResourceKind::Image);
+                false
+            }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(stage)");
+                host.on_error_fatal("無効なコマンドが指定されました。(stage)");
                 true
             }
         }
@@ -199,7 +233,7 @@ impl Vm {
                 let group_size = host.on_group_list_get_size(stage_idx);
                 if group_size >= 0 && (group_idx < 0 || group_idx >= group_size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のグループ番号が指定されました。(group_list)");
+                        host.on_error_fatal("範囲外のグループ番号が指定されました。(group_list)");
                     }
                     return true;
                 }
@@ -242,7 +276,7 @@ impl Vm {
                 true
             }
             _ => {
-                host.on_error("無効なコマンドが指定されました。(grouplist)");
+                host.on_error_fatal("無効なコマンドが指定されました。(grouplist)");
                 true
             }
         }
@@ -275,6 +309,7 @@ impl Vm {
             // --- Selection / Start commands → host ---
             ELM_GROUP_SEL => {
                 // C++ input->now.use(); group->init_sel(); group->set_wait_flag(true); group->start()
+                host.on_group_init(stage_idx, group_idx);
                 host.on_group_set_cancel(stage_idx, group_idx, false, -1);
                 host.on_group_sel(stage_idx, group_idx, sub);
                 self.enqueue_group_wait_proc(stage_idx, group_idx);
@@ -292,6 +327,7 @@ impl Vm {
                 } else {
                     -1
                 };
+                host.on_group_init(stage_idx, group_idx);
                 host.on_group_set_cancel(stage_idx, group_idx, true, _se_no);
                 host.on_group_sel(stage_idx, group_idx, sub);
                 self.enqueue_group_wait_proc(stage_idx, group_idx);
@@ -304,6 +340,7 @@ impl Vm {
             }
             ELM_GROUP_START => {
                 // C++ input->now.use(); group->init_sel(); group->start()
+                host.on_group_init(stage_idx, group_idx);
                 host.on_group_set_cancel(stage_idx, group_idx, false, -1);
                 host.on_group_start(stage_idx, group_idx, sub);
                 self.enqueue_group_wait_proc(stage_idx, group_idx);
@@ -320,9 +357,43 @@ impl Vm {
                 } else {
                     -1
                 };
+                host.on_group_init(stage_idx, group_idx);
                 host.on_group_set_cancel(stage_idx, group_idx, true, _se_no);
                 host.on_group_start(stage_idx, group_idx, sub);
                 self.enqueue_group_wait_proc(stage_idx, group_idx);
+                true
+            }
+            ELM_GROUP_ON_HIT_NO => {
+                let button_no = args
+                    .first()
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(-1);
+                host.on_group_on_hit_no(stage_idx, group_idx, button_no);
+                true
+            }
+            ELM_GROUP_ON_PUSHED_NO => {
+                let button_no = args
+                    .first()
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(-1);
+                host.on_group_on_pushed_no(stage_idx, group_idx, button_no);
+                true
+            }
+            ELM_GROUP_ON_DECIDED_NO => {
+                let button_no = args
+                    .first()
+                    .and_then(|p| match p.value {
+                        PropValue::Int(v) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(-1);
+                host.on_group_on_decided_no(stage_idx, group_idx, button_no);
                 true
             }
             ELM_GROUP_END => {
@@ -425,7 +496,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(group)");
+                host.on_error_fatal("無効なコマンドが指定されました。(group)");
                 true
             }
         }

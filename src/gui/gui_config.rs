@@ -15,9 +15,37 @@ pub(super) struct RunConfig {
     pub(super) scene_size: Option<(i32, i32)>,
     pub(super) system_extra_int_values: Vec<i32>,
     pub(super) system_extra_str_values: Vec<String>,
+    pub(super) default_global_extra_switch: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_global_extra_mode: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_object_disp: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_mode_value: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_mode_enable: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_mode_exist: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_switch_onoff: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_switch_enable: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_local_extra_switch_exist: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_global_extra_switch_cnt: usize,
+    pub(super) default_global_extra_mode_cnt: usize,
+    pub(super) default_object_disp_cnt: usize,
+    pub(super) default_local_extra_mode_cnt: usize,
+    pub(super) default_local_extra_switch_cnt: usize,
+    pub(super) default_charakoe_cnt: usize,
+    pub(super) default_charakoe_onoff: std::collections::BTreeMap<i32, i32>,
+    pub(super) default_charakoe_volume: std::collections::BTreeMap<i32, i32>,
     pub(super) load_wipe_type: i32,
     pub(super) load_wipe_time_ms: u64,
     pub(super) load_after_call: Option<(String, i32)>,
+    pub(super) preload_database_tables: Vec<Vec<Vec<siglus::vm::PropValue>>>,
+    pub(super) preload_database_row_calls: Vec<Vec<i32>>,
+    pub(super) preload_database_col_calls: Vec<Vec<i32>>,
+    pub(super) preload_database_col_types: Vec<Vec<u8>>,
+    pub(super) preload_cg_flag_count: usize,
+    pub(super) preload_cg_name_to_flag: std::collections::BTreeMap<String, i32>,
+    pub(super) preload_cg_group_codes: Vec<[i32; 5]>,
+    pub(super) preload_cg_code_exist_cnt: Vec<i32>,
+    pub(super) preload_bgm_names: Vec<String>,
+    pub(super) preload_counter_count: usize,
+    pub(super) preload_frame_action_ch_count: usize,
     pub(super) flick_scene_routes: Vec<siglus::vm::FlickSceneRoute>,
     pub(super) movie_backends: Vec<String>,
     pub(super) quake_ref_csv: Option<PathBuf>,
@@ -79,6 +107,41 @@ fn parse_quake_reference_paths(base_dir: &Path) -> (Option<PathBuf>, PathBuf) {
     (ref_csv, report)
 }
 
+fn parse_config_count(cfg: &siglus::gameexe::GameexeConfig, cnt_keys: &[&str]) -> usize {
+    cnt_keys
+        .iter()
+        .find_map(|k| cfg.first_values(k))
+        .and_then(|v| v.first())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn parse_indexed_config_map(
+    cfg: &siglus::gameexe::GameexeConfig,
+    cnt_keys: &[&str],
+    value_key_patterns: &[&str],
+) -> std::collections::BTreeMap<i32, i32> {
+    let cnt = parse_config_count(cfg, cnt_keys);
+    let mut out = std::collections::BTreeMap::new();
+    for idx in 0..cnt {
+        let mut v = None;
+        for pat in value_key_patterns {
+            let key = pat.replace("{idx}", &idx.to_string());
+            v = cfg
+                .first_values(&key)
+                .and_then(|vals| vals.first())
+                .and_then(|s| s.trim().parse::<i32>().ok());
+            if v.is_some() {
+                break;
+            }
+        }
+        if let Some(v) = v {
+            out.insert(idx as i32, v);
+        }
+    }
+    out
+}
+
 fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>, Vec<String>) {
     let int_cnt = cfg
         .first_values("SYSTEM.EXTRA_INT_VALUE.CNT")
@@ -113,6 +176,8 @@ fn parse_system_extra_values(cfg: &siglus::gameexe::GameexeConfig) -> (Vec<i32>,
 
     (int_values, str_values)
 }
+
+use super::resource_bootstrap::parse_vm_resource_bootstrap;
 
 fn parse_flick_scene_routes(
     cfg: &siglus::gameexe::GameexeConfig,
@@ -258,9 +323,127 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
 
     let persistent_state_path = base_dir.join("siglus_vm_state.bin");
     let (system_extra_int_values, system_extra_str_values) = parse_system_extra_values(&cfg);
+    let default_global_extra_switch_cnt =
+        parse_config_count(&cfg, &["CONFIG.GLOBAL_EXTRA_SWITCH.CNT"]);
+    let default_global_extra_mode_cnt = parse_config_count(&cfg, &["CONFIG.GLOBAL_EXTRA_MODE.CNT"]);
+    let default_object_disp_cnt = parse_config_count(
+        &cfg,
+        &["CONFIG.OBJECT_DISP.CNT", "CONFIG.GLOBAL_EXTRA_SWITCH.CNT"],
+    );
+    let default_local_extra_mode_cnt = parse_config_count(&cfg, &["CONFIG.LOCAL_EXTRA_MODE.CNT"]);
+    let default_local_extra_switch_cnt =
+        parse_config_count(&cfg, &["CONFIG.LOCAL_EXTRA_SWITCH.CNT"]);
+    let default_charakoe_cnt = parse_config_count(&cfg, &["CHRKOE.CNT", "CONFIG.CHRKOE.CNT"]);
+    let default_global_extra_switch = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.GLOBAL_EXTRA_SWITCH.CNT"],
+        &[
+            "CONFIG.GLOBAL_EXTRA_SWITCH.{idx}.ONOFF",
+            "CONFIG.GLOBAL_EXTRA_SWITCH.{idx}",
+        ],
+    );
+    let default_global_extra_mode = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.GLOBAL_EXTRA_MODE.CNT"],
+        &[
+            "CONFIG.GLOBAL_EXTRA_MODE.{idx}.MODE",
+            "CONFIG.GLOBAL_EXTRA_MODE.{idx}",
+        ],
+    );
+    let default_object_disp = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.OBJECT_DISP.CNT", "CONFIG.GLOBAL_EXTRA_SWITCH.CNT"],
+        &[
+            "CONFIG.OBJECT_DISP.{idx}.ONOFF",
+            "CONFIG.OBJECT_DISP.{idx}",
+            "CONFIG.GLOBAL_EXTRA_SWITCH.{idx}.ONOFF",
+        ],
+    );
+    let default_local_extra_mode_value = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_MODE.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}.MODE",
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}",
+        ],
+    );
+    let default_local_extra_mode_enable = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_MODE.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}.ENABLE",
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}.ONOFF",
+        ],
+    );
+    let default_local_extra_mode_exist = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_MODE.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}.EXIST",
+            "CONFIG.LOCAL_EXTRA_MODE.{idx}.USE",
+        ],
+    );
+    let default_local_extra_switch_onoff = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_SWITCH.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}.ONOFF",
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}",
+        ],
+    );
+    let default_local_extra_switch_enable = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_SWITCH.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}.ENABLE",
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}.ON",
+        ],
+    );
+    let default_local_extra_switch_exist = parse_indexed_config_map(
+        &cfg,
+        &["CONFIG.LOCAL_EXTRA_SWITCH.CNT"],
+        &[
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}.EXIST",
+            "CONFIG.LOCAL_EXTRA_SWITCH.{idx}.USE",
+        ],
+    );
+    let default_charakoe_onoff = parse_indexed_config_map(
+        &cfg,
+        &["CHRKOE.CNT", "CONFIG.CHRKOE.CNT"],
+        &["CHRKOE.{idx}.ONOFF", "CONFIG.CHRKOE.{idx}.ONOFF"],
+    );
+    let default_charakoe_volume = parse_indexed_config_map(
+        &cfg,
+        &["CHRKOE.CNT", "CONFIG.CHRKOE.CNT"],
+        &["CHRKOE.{idx}.VOLUME", "CONFIG.CHRKOE.{idx}.VOLUME"],
+    );
     let (load_wipe_type, load_wipe_time_ms) = parse_load_wipe(&cfg);
 
+    let preload_counter_count = cfg
+        .first_values("COUNTER.CNT")
+        .and_then(|v| v.first())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(32)
+        .max(1);
+    let preload_frame_action_ch_count = cfg
+        .first_values("FRAME_ACTION_CH.CNT")
+        .or_else(|| cfg.first_values("FRAME_ACTION.CH.CNT"))
+        .or_else(|| cfg.first_values("EXCALL.FRAME_ACTION_CH.CNT"))
+        .and_then(|v| v.first())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
     let load_after_call = cfg.load_after_call.clone();
+    let (
+        preload_database_tables,
+        preload_cg_flag_count,
+        preload_cg_name_to_flag,
+        preload_bgm_names,
+        preload_database_row_calls,
+        preload_database_col_calls,
+        preload_database_col_types,
+        preload_cg_group_codes,
+        preload_cg_code_exist_cnt,
+    ) = parse_vm_resource_bootstrap(&cfg, &base_dir);
     let flick_scene_routes = parse_flick_scene_routes(&cfg);
     let movie_backends = parse_movie_backends(&cfg);
     let (quake_ref_csv, quake_ref_report) = parse_quake_reference_paths(&base_dir);
@@ -280,9 +463,37 @@ pub(super) fn load_run_config() -> Result<RunConfig> {
         scene_size: cfg.screen_size,
         system_extra_int_values,
         system_extra_str_values,
+        default_global_extra_switch,
+        default_global_extra_mode,
+        default_object_disp,
+        default_local_extra_mode_value,
+        default_local_extra_mode_enable,
+        default_local_extra_mode_exist,
+        default_local_extra_switch_onoff,
+        default_local_extra_switch_enable,
+        default_local_extra_switch_exist,
+        default_global_extra_switch_cnt,
+        default_global_extra_mode_cnt,
+        default_object_disp_cnt,
+        default_local_extra_mode_cnt,
+        default_local_extra_switch_cnt,
+        default_charakoe_cnt,
+        default_charakoe_onoff,
+        default_charakoe_volume,
         load_wipe_type,
         load_wipe_time_ms,
         load_after_call,
+        preload_database_tables,
+        preload_database_row_calls,
+        preload_database_col_calls,
+        preload_database_col_types,
+        preload_cg_flag_count,
+        preload_cg_name_to_flag,
+        preload_cg_group_codes,
+        preload_cg_code_exist_cnt,
+        preload_bgm_names,
+        preload_counter_count,
+        preload_frame_action_ch_count,
         flick_scene_routes,
         movie_backends,
         quake_ref_csv,

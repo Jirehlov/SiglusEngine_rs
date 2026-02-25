@@ -12,6 +12,8 @@ impl Vm {
             user_prop_values: self.user_prop_values.clone(),
             frame_action: self.frame_action.clone(),
             frame_action_ch: self.frame_action_ch.clone(),
+            excall_frame_action: self.excall_frame_action.clone(),
+            excall_frame_action_ch: self.excall_frame_action_ch.clone(),
             key_wait_proc: self.key_wait_proc,
             group_wait_proc: self.group_wait_proc,
             excall_allocated: self.excall_allocated,
@@ -21,6 +23,7 @@ impl Vm {
             flags_d: self.flags_d.clone(),
             flags_e: self.flags_e.clone(),
             flags_f: self.flags_f.clone(),
+            excall_flags_f: self.excall_flags_f.clone(),
             flags_x: self.flags_x.clone(),
             flags_g: self.flags_g.clone(),
             flags_z: self.flags_z.clone(),
@@ -66,6 +69,7 @@ impl Vm {
             game_end_flag: self.game_end_flag,
             game_end_no_warning_flag: self.game_end_no_warning_flag,
             game_end_save_done_flag: self.game_end_save_done_flag,
+            syscom_cfg: self.syscom_cfg.clone(),
             no_wipe_anime_onoff_flag: self.no_wipe_anime_onoff_flag,
             skip_wipe_anime_onoff_flag: self.skip_wipe_anime_onoff_flag,
             script_skip_unread_message_flag: self.script_skip_unread_message_flag,
@@ -78,6 +82,7 @@ impl Vm {
             last_pc: self.last_pc,
             last_line_no: self.last_line_no,
             last_scene: self.last_scene.clone(),
+            proc_stack: self.proc_stack.clone(),
             // ----- Script runtime flags -----
             script_dont_set_save_point: self.script_dont_set_save_point,
             script_skip_disable: self.script_skip_disable,
@@ -118,6 +123,27 @@ impl Vm {
             script_font_bold: self.script_font_bold,
             script_font_shadow: self.script_font_shadow,
             script_allow_joypad_mode_onoff: self.script_allow_joypad_mode_onoff,
+            excall_script_font_name: self.excall_script_font_name.clone(),
+            excall_script_font_bold: self.excall_script_font_bold,
+            excall_script_font_shadow: self.excall_script_font_shadow,
+            counter_list_size: self.counter_list_size,
+            excall_counter_list_size: self.excall_counter_list_size,
+            counter_values: self.counter_values.clone(),
+            counter_active: self.counter_active.clone(),
+            database_tables: self.database_tables.clone(),
+            database_row_calls: self.database_row_calls.clone(),
+            database_col_calls: self.database_col_calls.clone(),
+            database_col_types: self.database_col_types.clone(),
+            cg_table_off_flag: self.cg_table_off_flag,
+            cg_flags: self.cg_flags.clone(),
+            cg_name_to_flag: self.cg_name_to_flag.clone(),
+            cg_group_codes: self.cg_group_codes.clone(),
+            cg_code_exist_cnt: self.cg_code_exist_cnt.clone(),
+            bgm_name_listened: self.bgm_name_listened.clone(),
+            g00buf_loaded: self.g00buf_loaded.clone(),
+            mask_slots: self.mask_slots.clone(),
+            object_gan_loaded_path: self.object_gan_loaded_path.clone(),
+            object_gan_started_set: self.object_gan_started_set.clone(),
         }
     }
     pub(super) fn apply_local_state(&mut self, st: &VmLocalState) {
@@ -130,6 +156,8 @@ impl Vm {
         self.user_prop_values = st.user_prop_values.clone();
         self.frame_action = st.frame_action.clone();
         self.frame_action_ch = st.frame_action_ch.clone();
+        self.excall_frame_action = st.excall_frame_action.clone();
+        self.excall_frame_action_ch = st.excall_frame_action_ch.clone();
         self.key_wait_proc = st.key_wait_proc;
         self.group_wait_proc = st.group_wait_proc;
         self.excall_allocated = st.excall_allocated;
@@ -139,6 +167,7 @@ impl Vm {
         self.flags_d = st.flags_d.clone();
         self.flags_e = st.flags_e.clone();
         self.flags_f = st.flags_f.clone();
+        self.excall_flags_f = st.excall_flags_f.clone();
         self.flags_x = st.flags_x.clone();
         self.flags_g = st.flags_g.clone();
         self.flags_z = st.flags_z.clone();
@@ -148,6 +177,15 @@ impl Vm {
         self.local_namae = st.local_namae.clone();
         self.save_point_set = st.save_point_set;
         self.sel_point_set = st.sel_point_set;
+        self.cg_flags = st.cg_flags.clone();
+        self.cg_name_to_flag = st.cg_name_to_flag.clone();
+        self.cg_group_codes = st.cg_group_codes.clone();
+        self.cg_code_exist_cnt = st.cg_code_exist_cnt.clone();
+        self.bgm_name_listened = st.bgm_name_listened.clone();
+        self.g00buf_loaded = st.g00buf_loaded.clone();
+        self.mask_slots = st.mask_slots.clone();
+        self.object_gan_loaded_path = st.object_gan_loaded_path.clone();
+        self.object_gan_started_set = st.object_gan_started_set.clone();
         self.cur_mwnd_element = st.cur_mwnd_element.clone();
         self.cur_sel_mwnd_element = st.cur_sel_mwnd_element.clone();
         self.last_sel_msg = st.last_sel_msg.clone();
@@ -181,6 +219,7 @@ impl Vm {
         self.game_end_flag = st.game_end_flag;
         self.game_end_no_warning_flag = st.game_end_no_warning_flag;
         self.game_end_save_done_flag = st.game_end_save_done_flag;
+        self.syscom_cfg = st.syscom_cfg.clone();
         self.no_wipe_anime_onoff_flag = st.no_wipe_anime_onoff_flag;
         self.skip_wipe_anime_onoff_flag = st.skip_wipe_anime_onoff_flag;
         self.options.no_wipe_anime = self.no_wipe_anime_onoff_flag != 0;
@@ -195,6 +234,8 @@ impl Vm {
         self.last_pc = st.last_pc;
         self.last_line_no = st.last_line_no;
         self.last_scene = st.last_scene.clone();
+        self.proc_stack = st.proc_stack.clone();
+        self.reconcile_proc_stack();
         // ----- Script runtime flags -----
         self.script_dont_set_save_point = st.script_dont_set_save_point;
         self.script_skip_disable = st.script_skip_disable;
@@ -235,6 +276,34 @@ impl Vm {
         self.script_font_bold = st.script_font_bold;
         self.script_font_shadow = st.script_font_shadow;
         self.script_allow_joypad_mode_onoff = st.script_allow_joypad_mode_onoff;
+        self.excall_script_font_name = st.excall_script_font_name.clone();
+        self.excall_script_font_bold = st.excall_script_font_bold;
+        self.excall_script_font_shadow = st.excall_script_font_shadow;
+        self.counter_list_size = st.counter_list_size;
+        self.excall_counter_list_size = st.excall_counter_list_size;
+        self.counter_values = st.counter_values.clone();
+        self.counter_active = st.counter_active.clone();
+        self.counter_list_size = self.counter_list_size.max(self.counter_values.len());
+        for scope in 0..self.excall_counter_list_size.len() {
+            if self.excall_allocated[scope] {
+                self.excall_counter_list_size[scope] =
+                    self.excall_counter_list_size[scope].max(self.counter_list_size);
+            }
+        }
+        self.database_tables = st.database_tables.clone();
+        self.database_row_calls = st.database_row_calls.clone();
+        self.database_col_calls = st.database_col_calls.clone();
+        self.database_col_types = st.database_col_types.clone();
+        self.cg_table_off_flag = st.cg_table_off_flag;
+        self.cg_flags = st.cg_flags.clone();
+        self.cg_name_to_flag = st.cg_name_to_flag.clone();
+        self.cg_group_codes = st.cg_group_codes.clone();
+        self.cg_code_exist_cnt = st.cg_code_exist_cnt.clone();
+        self.bgm_name_listened = st.bgm_name_listened.clone();
+        self.g00buf_loaded = st.g00buf_loaded.clone();
+        self.mask_slots = st.mask_slots.clone();
+        self.object_gan_loaded_path = st.object_gan_loaded_path.clone();
+        self.object_gan_started_set = st.object_gan_started_set.clone();
         self.save_point_snapshot = st.save_point_snapshot.clone();
         self.sel_point_snapshot = st.sel_point_snapshot.clone();
         self.sel_point_stock = st.sel_point_stock.clone();
@@ -247,6 +316,42 @@ impl Vm {
         self.skip_wipe_anime_onoff_flag = if self.options.skip_wipe_anime { 1 } else { 0 };
         self.system_extra_int_values = self.options.system_extra_int_values.clone();
         self.system_extra_str_values = self.options.system_extra_str_values.clone();
+        self.apply_syscom_option_defaults();
+
+        self.counter_list_size = self.options.preloaded_counter_count.max(1);
+        for scope in 0..self.excall_counter_list_size.len() {
+            self.excall_counter_list_size[scope] = if self.excall_allocated[scope] {
+                self.counter_list_size
+            } else {
+                0
+            };
+        }
+        let n = self.options.preloaded_frame_action_ch_count;
+        self.frame_action_ch.resize(n, FrameAction::default());
+        if self.excall_allocated[1] {
+            self.excall_frame_action_ch
+                .resize(n, FrameAction::default());
+        } else {
+            self.excall_frame_action_ch.clear();
+        }
+
+        self.database_tables = self.options.preloaded_database_tables.clone();
+        self.database_row_calls = self.options.preloaded_database_row_calls.clone();
+        self.database_col_calls = self.options.preloaded_database_col_calls.clone();
+        self.database_col_types = self.options.preloaded_database_col_types.clone();
+        self.cg_name_to_flag = self.options.preloaded_cg_name_to_flag.clone();
+        self.cg_group_codes = self.options.preloaded_cg_group_codes.clone();
+        self.cg_code_exist_cnt = self.options.preloaded_cg_code_exist_cnt.clone();
+        let min_cg_len = self
+            .options
+            .preloaded_cg_flag_count
+            .max(self.cg_name_to_flag.len());
+        if self.cg_flags.len() < min_cg_len {
+            self.cg_flags.resize(min_cg_len, 0);
+        }
+        for name in &self.options.preloaded_bgm_names {
+            self.bgm_name_listened.entry(name.clone()).or_insert(false);
+        }
     }
     pub fn snapshot_persistent_state(&self) -> VmPersistentState {
         VmPersistentState {
@@ -256,6 +361,7 @@ impl Vm {
             flags_d: self.flags_d.clone(),
             flags_e: self.flags_e.clone(),
             flags_f: self.flags_f.clone(),
+            excall_flags_f: self.excall_flags_f.clone(),
             flags_x: self.flags_x.clone(),
             flags_g: self.flags_g.clone(),
             flags_z: self.flags_z.clone(),
@@ -265,6 +371,14 @@ impl Vm {
             local_namae: self.local_namae.clone(),
             save_point_set: self.save_point_set,
             sel_point_set: self.sel_point_set,
+            counter_values: self.counter_values.clone(),
+            counter_active: self.counter_active.clone(),
+            cg_table_off_flag: self.cg_table_off_flag,
+            cg_flags: self.cg_flags.clone(),
+            cg_name_to_flag: self.cg_name_to_flag.clone(),
+            cg_group_codes: self.cg_group_codes.clone(),
+            cg_code_exist_cnt: self.cg_code_exist_cnt.clone(),
+            bgm_name_listened: self.bgm_name_listened.clone(),
         }
     }
     pub fn snapshot_end_save_state(&self) -> VmEndSaveState {
@@ -305,6 +419,14 @@ impl Vm {
         restore_fixed_string(&mut self.local_namae, &st.local_namae);
         self.save_point_set = st.save_point_set;
         self.sel_point_set = st.sel_point_set;
+        self.counter_values = st.counter_values.clone();
+        self.counter_active = st.counter_active.clone();
+        self.cg_table_off_flag = st.cg_table_off_flag;
+        self.cg_flags = st.cg_flags.clone();
+        self.cg_name_to_flag = st.cg_name_to_flag.clone();
+        self.cg_group_codes = st.cg_group_codes.clone();
+        self.cg_code_exist_cnt = st.cg_code_exist_cnt.clone();
+        self.bgm_name_listened = st.bgm_name_listened.clone();
         self.save_point_snapshot = if self.save_point_set {
             Some(self.snapshot_persistent_state())
         } else {

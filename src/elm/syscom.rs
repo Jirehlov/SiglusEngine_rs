@@ -519,7 +519,6 @@ pub const ELM_SYSCOM_MSG_BACK_GET_NAME: i32 = 337; // msg_back_get_name
 pub const ELM_SYSCOM_MSG_BACK_GET_KOE_NO: i32 = 338; // msg_back_get_koe_no
 pub const ELM_SYSCOM_MSG_BACK_GET_CHR_NO: i32 = 339; // msg_back_get_chr_no
 
-
 // C++ eng_syscom.cpp syscom SE kind mapping.
 pub const SE_KIND_MENU: i32 = 6;
 pub const SE_KIND_PREV_SEL: i32 = 7;

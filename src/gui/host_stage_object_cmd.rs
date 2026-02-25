@@ -101,7 +101,88 @@ impl GuiHost {
     ) {
         self.refresh_movie_lifecycle();
 
+        let arg_str = |idx: usize| -> Option<&str> {
+            args.get(idx).and_then(|p| match &p.value {
+                siglus::vm::PropValue::Str(v) => Some(v.as_str()),
+                _ => None,
+            })
+        };
+
         match cmd {
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_NUMBER
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_WEATHER
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MESH
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_BILLBOARD =>
+            {
+                self.reset_object_runtime_state_for_create(plane, object_index);
+                if let Some(file_name) = arg_str(0) {
+                    if file_name.is_empty() {
+                        return;
+                    }
+                    let state = self.get_or_create_object_state(plane, object_index);
+                    state.file_name = file_name.to_owned();
+                    self.clear_object_string_state(plane, object_index);
+                    self.apply_create_tail_disp_xy_pat(plane, object_index, 1, 2, 3, Some(4), args);
+                    self.emit_object_image(plane, object_index);
+                }
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_STRING
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_SAVE_THUMB
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_CAPTURE_THUMB
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_RECT =>
+            {
+                self.reset_object_runtime_state_for_create(plane, object_index);
+                if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_STRING {
+                    let text = args
+                        .first()
+                        .and_then(|p| match &p.value { siglus::vm::PropValue::Str(v) => Some(v.as_str()), _ => None })
+                        .unwrap_or("")
+                        .to_owned();
+                    self.set_object_string_state(plane, object_index, text.clone());
+                    self.apply_create_tail_disp_xy_pat(plane, object_index, 1, 2, 3, None, args);
+                    self.emit_generated_object_image(
+                        plane,
+                        object_index,
+                        Self::build_string_raster_image(
+                            &text,
+                            &self.get_object_string_style_state(plane, object_index),
+                        ),
+                    );
+                    return;
+                }
+                if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_RECT {
+                    self.clear_object_string_state(plane, object_index);
+                    self.apply_create_tail_disp_xy_pat(plane, object_index, 8, 9, 10, None, args);
+                    self.emit_generated_object_image(
+                        plane,
+                        object_index,
+                        Self::build_rect_image(args),
+                    );
+                    return;
+                }
+                self.clear_object_string_state(plane, object_index);
+                self.apply_create_tail_disp_xy_pat(plane, object_index, 1, 2, 3, None, args);
+                self.refresh_object_image(plane, object_index);
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_CAPTURE => {
+                self.reset_object_runtime_state_for_create(plane, object_index);
+                self.apply_create_tail_disp_xy_pat(plane, object_index, 0, 1, 2, None, args);
+                self.refresh_object_image(plane, object_index);
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_EMOTE => {
+                self.reset_object_runtime_state_for_create(plane, object_index);
+                if let Some(file_name) = arg_str(2) {
+                    if file_name.is_empty() {
+                        return;
+                    }
+                    let state = self.get_or_create_object_state(plane, object_index);
+                    state.file_name = file_name.to_owned();
+                    self.clear_object_string_state(plane, object_index);
+                    self.apply_create_tail_disp_xy_pat(plane, object_index, 3, 4, 5, None, args);
+                    self.emit_object_image(plane, object_index);
+                }
+            }
             x if x == siglus::elm::objectlist::ELM_OBJECT_CHANGE_FILE => {
                 if let Some(siglus::vm::Prop {
                     value: siglus::vm::PropValue::Str(file_name),
@@ -110,6 +191,7 @@ impl GuiHost {
                 {
                     let state = self.get_or_create_object_state(plane, object_index);
                     state.file_name = file_name.clone();
+                    self.clear_object_string_state(plane, object_index);
                     self.emit_object_image(plane, object_index);
                 }
             }
@@ -120,9 +202,13 @@ impl GuiHost {
                     ..
                 }) = args.first()
                 {
-                    let state = self.get_or_create_object_state(plane, object_index);
-                    state.file_name = file_name.clone();
-                    state.visible = args.get(1).and_then(|p| p.as_int()).unwrap_or(1) != 0;
+                    let visible = args.get(1).and_then(|p| p.as_int()).unwrap_or(1) != 0;
+                    {
+                        let state = self.get_or_create_object_state(plane, object_index);
+                        state.file_name = file_name.clone();
+                        state.visible = visible;
+                    }
+                    self.clear_object_string_state(plane, object_index);
                     self.emit_object_image(plane, object_index);
                 }
             }
@@ -173,11 +259,15 @@ impl GuiHost {
                 let visible = args.first().and_then(|p| p.as_int()).unwrap_or(1) != 0;
                 let state = self.get_or_create_object_state(plane, object_index);
                 state.visible = visible;
-                let _ = self.event_tx.send(HostEvent::SetObjectVisible {
-                    stage: plane,
-                    index: object_index,
-                    visible,
-                });
+                if visible {
+                    self.emit_object_sort_and_visibility(plane, object_index);
+                } else {
+                    let _ = self.event_tx.send(HostEvent::SetObjectVisible {
+                        stage: plane,
+                        index: object_index,
+                        visible: false,
+                    });
+                }
             }
             x if x == siglus::elm::objectlist::ELM_OBJECT_PATNO => {
                 if let Some(pat_no) = args.first().and_then(|p| p.as_int()) {
@@ -219,9 +309,7 @@ impl GuiHost {
                     }
                 }
             }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_CAPTURE
-                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_FROM_CAPTURE_FILE =>
-            {
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_FROM_CAPTURE_FILE => {
                 // Treat these creation commands as lifecycle reset points.
                 let st = self.get_or_create_object_state(plane, object_index);
                 reset_object_state_preserve_seq(st);
@@ -229,6 +317,66 @@ impl GuiHost {
                     stage: plane,
                     index: object_index,
                 });
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_STRING => {
+                let text = args
+                    .first()
+                    .and_then(|p| match &p.value { siglus::vm::PropValue::Str(v) => Some(v.as_str()), _ => None })
+                    .unwrap_or("")
+                    .to_owned();
+                self.set_object_string_state(plane, object_index, text.clone());
+                let style = self.get_object_string_style_state(plane, object_index);
+                self.emit_generated_object_image(
+                    plane,
+                    object_index,
+                    Self::build_string_raster_image(&text, &style),
+                );
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_STRING_PARAM => {
+                let style = ObjectStringStyleState {
+                    moji_size: args.first().and_then(|p| p.as_int()).unwrap_or(18),
+                    moji_space_x: args.get(1).and_then(|p| p.as_int()).unwrap_or(0),
+                    moji_space_y: args.get(2).and_then(|p| p.as_int()).unwrap_or(0),
+                    moji_cnt: args.get(3).and_then(|p| p.as_int()).unwrap_or(0),
+                    moji_color: args.get(4).and_then(|p| p.as_int()).unwrap_or(0xFFFFFF),
+                    shadow_color: args.get(5).and_then(|p| p.as_int()).unwrap_or(0x000000),
+                    fuchi_color: args.get(6).and_then(|p| p.as_int()).unwrap_or(0x000000),
+                    shadow_mode: args.get(7).and_then(|p| p.as_int()).unwrap_or(-1),
+                };
+                self.set_object_string_style_state(plane, object_index, style.clone());
+                let text = self.get_object_string_state(plane, object_index);
+                self.emit_generated_object_image(
+                    plane,
+                    object_index,
+                    Self::build_string_raster_image(&text, &style),
+                );
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_NUMBER => {
+                let num = args.first().and_then(|p| p.as_int()).unwrap_or(0);
+                self.set_object_number_state(plane, object_index, num);
+                let nstyle = self.get_object_number_style_state(plane, object_index);
+                self.emit_generated_object_image(
+                    plane,
+                    object_index,
+                    Self::build_number_raster_image(num, &nstyle),
+                );
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_NUMBER_PARAM => {
+                let nstyle = ObjectNumberStyleState {
+                    keta_max: args.first().and_then(|p| p.as_int()).unwrap_or(0),
+                    disp_zero: args.get(1).and_then(|p| p.as_int()).unwrap_or(0),
+                    disp_sign: args.get(2).and_then(|p| p.as_int()).unwrap_or(0),
+                    tumeru_sign: args.get(3).and_then(|p| p.as_int()).unwrap_or(0),
+                    space_mod: args.get(4).and_then(|p| p.as_int()).unwrap_or(0),
+                    space: args.get(5).and_then(|p| p.as_int()).unwrap_or(0),
+                };
+                self.set_object_number_style_state(plane, object_index, nstyle.clone());
+                let num = self.get_object_number_state(plane, object_index);
+                self.emit_generated_object_image(
+                    plane,
+                    object_index,
+                    Self::build_number_raster_image(num, &nstyle),
+                );
             }
             x if x == siglus::elm::objectlist::ELM_OBJECT_SET_CENTER => {
                 let cx = args.first().and_then(|p| p.as_int()).unwrap_or(0) as f32;
@@ -357,6 +505,18 @@ impl GuiHost {
                         layer: layer_v,
                         seq: seq_v,
                     });
+                    if self
+                        .objects
+                        .get(&(plane, object_index))
+                        .map(|v| v.visible)
+                        .unwrap_or(false)
+                    {
+                        let _ = self.event_tx.send(HostEvent::SetObjectVisible {
+                            stage: plane,
+                            index: object_index,
+                            visible: true,
+                        });
+                    }
                 }
             }
             x if x == siglus::elm::objectlist::ELM_OBJECT_LAYER => {
@@ -373,136 +533,25 @@ impl GuiHost {
                         layer: layer_v,
                         seq: seq_v,
                     });
-                }
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_FREE || x == siglus::elm::objectlist::ELM_OBJECT_INIT => {
-                let st = self.get_or_create_object_state(plane, object_index);
-                reset_object_state_preserve_seq(st);
-                self.movie_playing_objects.remove(&(plane, object_index));
-                self.movie_generations.remove(&(plane, object_index));
-                self.movie_auto_free_ms.remove(&(plane, object_index));
-                self.movie_last_failure.remove(&(plane, object_index));
-                let _ = self.event_tx.send(HostEvent::SetObjectVisible {
-                    stage: plane,
-                    index: object_index,
-                    visible: false,
-                });
-                let _ = self.event_tx.send(HostEvent::RemoveObject {
-                    stage: plane,
-                    index: object_index,
-                });
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_RESUME_MOVIE => {
-                self.movie_playing_objects.insert((plane, object_index));
-                let duration_ms = self
-                    .movie_auto_free_ms
-                    .get(&(plane, object_index))
-                    .copied()
-                    .unwrap_or(3_000)
-                    .max(1);
-                let generation = self.next_movie_generation;
-                self.next_movie_generation = self.next_movie_generation.saturating_add(1);
-                self.movie_generations.insert((plane, object_index), generation);
-                self.movie_last_failure.remove(&(plane, object_index));
-                let file_name = self
-                    .objects
-                    .get(&(plane, object_index))
-                    .map(|o| o.file_name.clone())
-                    .unwrap_or_default();
-                let _ = self.event_tx.send(HostEvent::PlayObjectMovie {
-                    stage: plane,
-                    index: object_index,
-                    file_name,
-                    duration_ms,
-                    generation,
-                });
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_PAUSE_MOVIE
-                || x == siglus::elm::objectlist::ELM_OBJECT_END_MOVIE_LOOP =>
-            {
-                self.movie_playing_objects.remove(&(plane, object_index));
-                let generation = self
-                    .movie_generations
-                    .remove(&(plane, object_index))
-                    .unwrap_or(0);
-                let _ = self.event_tx.send(HostEvent::StopObjectMovie {
-                    stage: plane,
-                    index: object_index,
-                    generation,
-                });
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE
-                || x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE_KEY =>
-            {
-                while self.movie_playing_objects.contains(&(plane, object_index)) {
-                    if self.shutdown.load(Ordering::Relaxed) {
-                        break;
+                    if self
+                        .objects
+                        .get(&(plane, object_index))
+                        .map(|v| v.visible)
+                        .unwrap_or(false)
+                    {
+                        let _ = self.event_tx.send(HostEvent::SetObjectVisible {
+                            stage: plane,
+                            index: object_index,
+                            visible: true,
+                        });
                     }
-                    self.refresh_movie_lifecycle();
-                    std::thread::sleep(std::time::Duration::from_millis(8));
                 }
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE
-                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_LOOP
-                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT
-                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT_KEY =>
-            {
-                let file_name = args
-                    .first()
-                    .and_then(|p| match &p.value {
-                        siglus::vm::PropValue::Str(v) => Some(v.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                let resolved_name = {
-                    let state = self.get_or_create_object_state(plane, object_index);
-                    if !file_name.is_empty() {
-                        state.file_name = file_name;
-                    }
-                    state.file_name.clone()
-                };
-                let duration_ms = self
-                    .movie_auto_free_ms
-                    .get(&(plane, object_index))
-                    .copied()
-                    .unwrap_or(3_000)
-                    .max(1);
-                let generation = self.next_movie_generation;
-                self.next_movie_generation = self.next_movie_generation.saturating_add(1);
-                self.movie_generations.insert((plane, object_index), generation);
-                self.movie_playing_objects.insert((plane, object_index));
-                self.movie_last_failure.remove(&(plane, object_index));
-                let _ = self.event_tx.send(HostEvent::PlayObjectMovie {
-                    stage: plane,
-                    index: object_index,
-                    file_name: resolved_name,
-                    duration_ms,
-                    generation,
-                });
-            }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_SET_MOVIE_AUTO_FREE => {
-                let ms = args
-                    .first()
-                    .and_then(|p| p.as_int())
-                    .unwrap_or(3_000)
-                    .max(1);
-                self.movie_auto_free_ms.insert((plane, object_index), ms);
             }
             _ => {
-                if is_object_file_create_command(cmd) {
-                    if let Some(siglus::vm::Prop {
-                        value: siglus::vm::PropValue::Str(file_name),
-                        ..
-                    }) = args.first()
-                    {
-                        let state = self.get_or_create_object_state(plane, object_index);
-                        state.file_name = file_name.clone();
-                        state.visible = args.get(1).and_then(|p| p.as_int()).unwrap_or(1) != 0;
-                        self.emit_object_image(plane, object_index);
-                    }
+                if self.handle_object_command_post_render(plane, object_index, cmd, args) {
+                    return;
                 }
             }
         }
     }
-
 }

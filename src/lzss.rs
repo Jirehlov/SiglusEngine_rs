@@ -1,6 +1,6 @@
 //! LZSS decompression (Siglus-style wrapper: <packed_size:u32><orig_size:u32><payload...>)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Detects the Siglus LZSS container header.
 pub fn looks_like_lzss(blob: &[u8]) -> bool {

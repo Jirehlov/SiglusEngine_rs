@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 impl Vm {
     pub(super) fn resolve_command_element_alias(&self, element: &[i32]) -> Vec<i32> {
         let mut cur = element.to_vec();
-        for _ in 0..4 {
+        for _ in 0..8 {
             if cur.is_empty() {
                 break;
             }
@@ -21,13 +21,15 @@ impl Vm {
                 && crate::elm::call::is_cur_call(cur[0])
                 && crate::elm::owner::is_call_prop(cur[1])
             {
-                let cp_idx = elm_code(cur[1]) as usize;
+                let cp_code = elm_code(cur[1]) as usize;
                 if let Some(frame) = self.frames.last() {
-                    if let Some(cp) = frame.call.user_props.get(cp_idx) {
-                        if let PropValue::Element(base) = &cp.value {
-                            let mut next = base.clone();
-                            next.extend_from_slice(&cur[2..]);
-                            replaced = Some(next);
+                    if let Some(slot) = Self::resolve_call_prop_slot(&frame.call, cp_code) {
+                        if let Some(cp) = frame.call.user_props.get(slot) {
+                            if let PropValue::Element(base) = &cp.value {
+                                let mut next = base.clone();
+                                next.extend_from_slice(&cur[2..]);
+                                replaced = Some(next);
+                            }
                         }
                     }
                 }
@@ -54,6 +56,8 @@ impl Vm {
                 return_dat: dat,
                 return_line_no: 0,
                 expect_ret_form: crate::elm::form::VOID,
+                call_type: VmCallType::None,
+                excall_flag: false,
                 frame_action_flag: false,
                 arg_cnt: 0,
                 call: CallContext::new(DEFAULT_CALL_FLAG_CNT),
@@ -68,6 +72,8 @@ impl Vm {
             user_prop_values,
             frame_action: FrameAction::default(),
             frame_action_ch: Vec::new(),
+            excall_frame_action: FrameAction::default(),
+            excall_frame_action_ch: Vec::new(),
             key_wait_proc: KeyWaitProc::default(),
             group_wait_proc: GroupWaitProc::default(),
             excall_allocated: [false; 2],
@@ -77,6 +83,7 @@ impl Vm {
             flags_d: vec![0i32; FLAG_LIST_SIZE],
             flags_e: vec![0i32; FLAG_LIST_SIZE],
             flags_f: vec![0i32; FLAG_LIST_SIZE],
+            excall_flags_f: [vec![0i32; FLAG_LIST_SIZE], vec![0i32; FLAG_LIST_SIZE]],
             flags_x: vec![0i32; FLAG_LIST_SIZE],
             flags_g: vec![0i32; FLAG_LIST_SIZE],
             flags_z: vec![0i32; FLAG_LIST_SIZE],
@@ -132,6 +139,7 @@ impl Vm {
             game_end_flag: 0,
             game_end_no_warning_flag: 0,
             game_end_save_done_flag: 0,
+            syscom_cfg: VmSyscomConfigState::default(),
             no_wipe_anime_onoff_flag: if options.no_wipe_anime { 1 } else { 0 },
             skip_wipe_anime_onoff_flag: if options.skip_wipe_anime { 1 } else { 0 },
             script_skip_unread_message_flag: 0,
@@ -148,7 +156,7 @@ impl Vm {
             last_pc: 0,
             last_line_no: 0,
             last_scene: String::new(),
-            // ----- Script runtime flags (cmd_script.cpp alignment) -----
+            proc_stack: vec![VmProcType::Script],
             script_dont_set_save_point: false,
             script_skip_disable: false,
             script_ctrl_disable: false,
@@ -188,6 +196,30 @@ impl Vm {
             script_font_bold: -1,
             script_font_shadow: -1,
             script_allow_joypad_mode_onoff: -1,
+            excall_script_font_name: [String::new(), String::new()],
+            excall_script_font_bold: [-1, -1],
+            excall_script_font_shadow: [-1, -1],
+            counter_list_size: options.preloaded_counter_count.max(1),
+            excall_counter_list_size: [
+                options.preloaded_counter_count.max(1),
+                options.preloaded_counter_count.max(1),
+            ],
+            counter_values: Vec::new(),
+            counter_active: Vec::new(),
+            database_tables: Vec::new(),
+            database_row_calls: Vec::new(),
+            database_col_calls: Vec::new(),
+            database_col_types: Vec::new(),
+            cg_table_off_flag: false,
+            cg_flags: Vec::new(),
+            cg_name_to_flag: BTreeMap::new(),
+            cg_group_codes: Vec::new(),
+            cg_code_exist_cnt: Vec::new(),
+            bgm_name_listened: BTreeMap::new(),
+            g00buf_loaded: Vec::new(),
+            mask_slots: Vec::new(),
+            object_gan_loaded_path: BTreeMap::new(),
+            object_gan_started_set: BTreeMap::new(),
             local_save_slots: BTreeMap::new(),
             quick_save_slots: BTreeMap::new(),
             inner_save_slots: BTreeMap::new(),
@@ -309,6 +341,7 @@ impl Vm {
                 route.z_no,
                 crate::elm::form::VOID,
                 &[],
+                false,
                 provider,
             )?;
             self.run_inner(host, provider)?;
@@ -318,80 +351,6 @@ impl Vm {
         Ok(())
     }
 
-    fn is_flick_scene_allowed(&self, host: &mut dyn Host) -> bool {
-        if self.game_timer_move_flag == 0 {
-            return false;
-        }
-        if self.msg_back_open_flag != 0 {
-            return false;
-        }
-        if self.syscom_menu_disable_flag != 0 {
-            return false;
-        }
-        let hide_mwnd_active = self.hide_mwnd_onoff_flag != 0
-            && self.hide_mwnd_enable_flag != 0
-            && self.hide_mwnd_exist_flag != 0
-            && !self.script_hide_mwnd_disable;
-        if hide_mwnd_active {
-            return false;
-        }
-        if self.excall_allocated.iter().any(|v| *v) {
-            return false;
-        }
-        if host.on_movie_is_playing() {
-            return false;
-        }
-        true
-    }
-
-    /// C++ `eng_frame.cpp::frame_action_proc` (L1412-1460).
-    ///
-    /// Consumes `do_load_after_call_flag` by performing a farcall to
-    /// `load_after_call_scene` / `load_after_call_z_no` from INI config.
-    /// The farcall is issued with `frame_action_flag = true` so the new
-    /// call frame is automatically popped on return.
-    ///
-    /// Must be called **after** `run_syscom_proc_queue` completes (same as
-    /// C++ frame ordering: `frame_main_proc` → `frame_action_proc`).
-    pub fn frame_action_proc(
-        &mut self,
-        host: &mut dyn Host,
-        provider: &mut dyn SceneProvider,
-    ) -> Result<()> {
-        if self.do_load_after_call_flag != 0 {
-            // Consume once per frame, matching C++ `frame_local` which resets the
-            // flag to false at the start of every frame.
-            self.do_load_after_call_flag = 0;
-
-            if let Some(scene) = self.options.load_after_call_scene.clone() {
-                if !scene.is_empty() {
-                    let z = self.options.load_after_call_z_no;
-                    host.on_frame_action_load_after_call(&scene, z);
-
-                    // C++ calls tnm_scene_proc_farcall(scene, z, FM_VOID, false, true)
-                    // which pushes a new call with frame_action_flag=true and then
-                    // immediately pushes TNM_PROC_TYPE_SCRIPT → tnm_proc_script().
-                    self.proc_farcall_like(&scene, z, crate::elm::form::VOID, &[], provider)?;
-                    if let Some(f) = self.frames.last_mut() {
-                        f.frame_action_flag = true;
-                    }
-                    // C++ then enters tnm_proc_script() inline; equivalent is
-                    // running the VM from the new PC until the farcall returns.
-                    self.run_inner(host, provider)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn run(&mut self, host: &mut dyn Host, provider: &mut dyn SceneProvider) -> Result<()> {
-        self.run_inner(host, provider).with_context(|| {
-            format!(
-                "vm: error at pc={} line={} scene={}",
-                self.last_pc, self.last_line_no, self.last_scene
-            )
-        })
-    }
     pub(super) fn run_inner(
         &mut self,
         host: &mut dyn Host,
@@ -400,17 +359,27 @@ impl Vm {
         while !self.lexer.is_eof() && !self.halted {
             self.run_flick_scene_proc(host, provider)?;
             if self.run_key_wait_proc(host) == KeyWaitTickResult::Pending {
+                self.frame_action_counter_tick_all(host);
                 host.on_wait_frame();
                 continue;
             }
             if self.run_group_wait_proc(host) {
+                self.frame_action_counter_tick_all(host);
                 host.on_wait_frame();
                 continue;
             }
+            // eng_frame.cpp alignment: frame_action counters advance on frame tick,
+            // not only when scripts explicitly call counter.wait/check_value.
+            self.frame_action_counter_tick_all(host);
             self.last_pc = self.lexer.pc;
             self.last_line_no = self.lexer.cur_line_no;
             self.last_scene = self.scene.clone();
-            host.on_location(&self.scene_title, &self.scene, self.lexer.cur_line_no);
+            host.on_location(
+                &self.scene_title,
+                &self.scene,
+                self.lexer.cur_line_no,
+                self.lexer.pc,
+            );
             if self.steps >= self.max_steps {
                 self.halted = true;
                 break;
@@ -420,28 +389,50 @@ impl Vm {
                 break;
             }
             self.steps += 1;
-            let code = self.lexer.pop_u8()?;
+            let code = self.vm_read_u8(host, "VM", "opcode")?;
             self.stats.opcode_hits[code as usize] += 1;
             if code == cd::SEL_BLOCK_START || code == cd::SEL_BLOCK_END {
                 // Selection blocks are UI-driven; ignore in the headless VM for now.
                 continue;
             }
             if code == cd::PUSH {
-                let form_code = self.lexer.pop_i32()?;
+                let form_code = self.vm_read_i32(host, "CD_PUSH", "form")?;
                 if form_code == crate::elm::form::INT {
-                    let v = self.lexer.pop_i32()?;
+                    let v = self.vm_read_i32(host, "CD_PUSH", "int payload")?;
                     self.stack.push_int(v);
                 } else if form_code == crate::elm::form::STR {
-                    let s = self.lexer.pop_str_ret()?;
+                    let s = self.vm_read_str(host, "CD_PUSH", "str payload")?;
                     self.stack.push_str(s);
                 }
                 continue;
             }
             if code == cd::PROPERTY {
-                let element_raw = self.stack.pop_element()?;
+                let element_raw = self.stack.pop_element().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_PROPERTY: pop target element failed: {}", e),
+                    );
+                    e
+                })?;
                 let element = self.resolve_command_element_alias(&element_raw);
-                if let Some((v, form)) = self.try_property_internal(&element) {
+                if let Some((v, form)) =
+                    self.try_property_internal(&element, host).map_err(|e| {
+                        self.report_vm_fatal_with_context(
+                            host,
+                            &format!(
+                                "CD_PROPERTY internal route failed: target={:?} err={}",
+                                element, e
+                            ),
+                        );
+                        e
+                    })?
+                {
                     self.push_vm_value(form, v);
+                } else if Vm::is_known_internal_property_target(&element) {
+                    host.on_error_fatal(
+                        "CD_PROPERTY: known internal target was not handled by VM route",
+                    );
+                    self.stack.push_int(0);
                 } else if let Some((ret, ret_form)) = host.on_property_typed(&element) {
                     self.push_host_ret(&ret, ret_form);
                 } else {
@@ -452,9 +443,9 @@ impl Vm {
                 continue;
             }
             if code == cd::OPERATE_2 {
-                let form_l = self.lexer.pop_i32()?;
-                let form_r = self.lexer.pop_i32()?;
-                let opr = self.lexer.pop_u8()?;
+                let form_l = self.vm_read_i32(host, "CD_OPERATE_2", "lhs form")?;
+                let form_r = self.vm_read_i32(host, "CD_OPERATE_2", "rhs form")?;
+                let opr = self.vm_read_u8(host, "CD_OPERATE_2", "operator")?;
                 self.calculate_2(form_l, form_r, opr, host)?;
                 continue;
             }
@@ -463,14 +454,53 @@ impl Vm {
                 continue;
             }
             if code == cd::ASSIGN {
-                let left_form = self.lexer.pop_i32()?;
-                let right_form = self.lexer.pop_i32()?;
-                let al_id = self.lexer.pop_i32()?;
+                let left_form = self.vm_read_i32(host, "CD_ASSIGN", "lhs form")?;
+                let right_form = self.vm_read_i32(host, "CD_ASSIGN", "rhs form")?;
+                let al_id = self.vm_read_i32(host, "CD_ASSIGN", "arg_list_id")?;
                 // fixed-form rhs
-                let rhs = self.pop_single_arg(right_form)?;
-                let element = self.stack.pop_element()?;
-                if !self.try_assign_internal(&element, al_id, &rhs)? {
-                    host.on_assign(&element, al_id, &rhs);
+                let rhs = self.pop_single_arg(right_form).map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ASSIGN: pop rhs failed: {}", e),
+                    );
+                    e
+                })?;
+                let element_raw = self.stack.pop_element().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ASSIGN: pop target element failed: {}", e),
+                    );
+                    e
+                })?;
+                let element = self.resolve_command_element_alias(&element_raw);
+                if element.is_empty() {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        "CD_ASSIGN: empty target element after alias resolution",
+                    );
+                    bail!("CD_ASSIGN: empty target element after alias resolution");
+                }
+                match self.try_assign_internal(&element, al_id, &rhs, host) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        if Vm::is_known_internal_property_target(&element) {
+                            host.on_error_fatal(
+                                "CD_ASSIGN: known internal target was not handled by VM route",
+                            );
+                        } else {
+                            host.on_assign(&element, al_id, &rhs)
+                        }
+                    }
+                    Err(e) => {
+                        self.report_vm_fatal_with_context(
+                            host,
+                            &format!(
+                                "CD_ASSIGN writeback failed: target={:?} al_id={} rhs_form={} err={}",
+                                element, al_id, rhs.form, e
+                            ),
+                        );
+                        return Err(e);
+                    }
                 }
                 // left_form currently unused (host decides)
                 let _ = left_form;
@@ -478,7 +508,7 @@ impl Vm {
             }
             if code == cd::NL {
                 let old_line_no = self.lexer.cur_line_no;
-                let line_no = self.lexer.pop_i32()?;
+                let line_no = self.vm_read_i32(host, "CD_NL", "line no")?;
                 self.lexer.cur_line_no = line_no;
                 if host.is_breaking()
                     && host.break_step_flag()
@@ -491,26 +521,32 @@ impl Vm {
             }
 
             if code == cd::COMMAND {
-                let arg_list_id = self.lexer.pop_i32()?;
+                let arg_list_id = self.vm_read_i32(host, "CD_COMMAND", "arg_list_id")?;
 
-                let mut args = self.pop_arg_list()?;
+                let mut args = self.pop_arg_list(host)?;
 
-                let element_raw = self.stack.pop_element()?;
+                let element_raw = self.stack.pop_element().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_COMMAND: pop target element failed: {}", e),
+                    );
+                    e
+                })?;
                 let element = self.resolve_command_element_alias(&element_raw);
 
-                let named_arg_cnt = self.lexer.pop_i32()?;
+                let named_arg_cnt = self.vm_read_i32(host, "CD_COMMAND", "named_arg_cnt")?;
                 if named_arg_cnt > 0 {
                     for a in 0..named_arg_cnt as usize {
-                        let id = self.lexer.pop_i32()?;
+                        let id = self.vm_read_i32(host, "CD_COMMAND", "named arg id")?;
                         if let Some(idx) = args.len().checked_sub(a + 1) {
                             args[idx].id = id;
                         }
                     }
                 }
-                let ret_form = self.lexer.pop_i32()?;
+                let ret_form = self.vm_read_i32(host, "CD_COMMAND", "ret form")?;
                 let mut read_flag_no = None;
                 if Self::command_needs_read_flag_tail(&element) {
-                    read_flag_no = Some(self.lexer.pop_i32()?);
+                    read_flag_no = Some(self.vm_read_i32(host, "CD_COMMAND", "read flag no")?);
                 }
                 self.dispatch_message_command(&element, arg_list_id, &args, read_flag_no, host);
 
@@ -535,36 +571,46 @@ impl Vm {
 
             match code {
                 x if x == cd::GOTO => {
-                    let label_no = self.lexer.pop_i32()?;
-                    self.lexer.jump_to_label(label_no)?;
+                    let label_no = self.vm_read_i32(host, "CD_GOTO", "label")?;
+                    self.proc_jump_to_label(label_no, "CD_GOTO", host)?;
                 }
                 x if x == cd::GOTO_FALSE => {
                     let cond = self.stack.pop_int()?;
-                    let label_no = self.lexer.pop_i32()?;
+                    let label_no = self.vm_read_i32(host, "CD_GOTO_FALSE", "label")?;
                     if cond == 0 {
-                        self.lexer.jump_to_label(label_no)?;
+                        self.proc_jump_to_label(label_no, "CD_GOTO_FALSE", host)?;
                     }
                 }
                 x if x == cd::GOTO_TRUE => {
                     let cond = self.stack.pop_int()?;
-                    let label_no = self.lexer.pop_i32()?;
+                    let label_no = self.vm_read_i32(host, "CD_GOTO_TRUE", "label")?;
                     if cond != 0 {
-                        self.lexer.jump_to_label(label_no)?;
+                        self.proc_jump_to_label(label_no, "CD_GOTO_TRUE", host)?;
                     }
                 }
                 x if x == cd::GOSUB => {
-                    self.proc_gosub(crate::elm::form::INT)?;
+                    if let Err(e) = self.proc_gosub(crate::elm::form::INT, host) {
+                        return Err(e);
+                    }
                 }
                 x if x == cd::GOSUBSTR => {
-                    self.proc_gosub(crate::elm::form::STR)?;
+                    if let Err(e) = self.proc_gosub(crate::elm::form::STR, host) {
+                        return Err(e);
+                    }
                 }
                 x if x == cd::RETURN => {
-                    if !self.proc_return(host)? {
+                    let should_continue = match self.proc_return(host) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    };
+                    if !should_continue {
                         return Ok(());
                     }
                 }
                 x if x == cd::POP => {
-                    let form_code = self.lexer.pop_i32()?;
+                    let form_code = self.vm_read_i32(host, "CD_POP", "form")?;
                     match form_code {
                         f if f == crate::elm::form::INT => {
                             let _ = self.stack.pop_int()?;
@@ -576,7 +622,7 @@ impl Vm {
                     }
                 }
                 x if x == cd::COPY => {
-                    let form_code = self.lexer.pop_i32()?;
+                    let form_code = self.vm_read_i32(host, "CD_COPY", "form")?;
                     match form_code {
                         f if f == crate::elm::form::INT => {
                             let v = self.stack.back_int()?;
@@ -593,8 +639,8 @@ impl Vm {
                     self.stack.copy_element()?;
                 }
                 x if x == cd::DEC_PROP => {
-                    let form_code = self.lexer.pop_i32()?;
-                    let prop_id = self.lexer.pop_i32()?;
+                    let form_code = self.vm_read_i32(host, "CD_DEC_PROP", "form")?;
+                    let prop_id = self.vm_read_i32(host, "CD_DEC_PROP", "prop id")?;
                     let mut size = 0;
                     if form_code == crate::elm::form::INTLIST
                         || form_code == crate::elm::form::STRLIST
@@ -604,11 +650,11 @@ impl Vm {
                     self.proc_dec_prop(form_code, prop_id, size);
                 }
                 x if x == cd::ARG => {
-                    self.proc_arg()?;
+                    self.proc_arg(host)?;
                 }
                 x if x == cd::OPERATE_1 => {
-                    let form = self.lexer.pop_i32()?;
-                    let opr = self.lexer.pop_u8()?;
+                    let form = self.vm_read_i32(host, "CD_OPERATE_1", "form")?;
+                    let opr = self.vm_read_u8(host, "CD_OPERATE_1", "operator")?;
                     self.calculate_1(form, opr, host)?;
                 }
                 x if x == cd::NAME => {
@@ -616,18 +662,22 @@ impl Vm {
                     host.on_name(&s);
                 }
                 x if x == cd::TEXT => {
-                    let read_flag_no = self.lexer.pop_i32()?;
+                    let read_flag_no = self.vm_read_i32(host, "CD_TEXT", "read flag no")?;
                     let msg = self.stack.pop_str()?;
                     host.on_text(&msg, read_flag_no);
                 }
                 x if x == cd::NONE => {
                     host.on_script_fatal("スクリプトの解析に失敗しました。");
                     self.halted = true;
+                    self.proc_stack.clear();
+                    self.proc_stack.push(VmProcType::None);
                     return Ok(());
                 }
                 x if x == cd::EOF => {
                     host.on_script_fatal("ファイルの終端に到達しました。");
                     self.halted = true;
+                    self.proc_stack.clear();
+                    self.proc_stack.push(VmProcType::None);
                     return Ok(());
                 }
                 other => {

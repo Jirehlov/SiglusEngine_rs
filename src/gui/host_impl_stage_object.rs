@@ -114,13 +114,25 @@ macro_rules! impl_host_stage_object_methods {
                 st.result = -1;
                 st.result_button_no = -1;
                 st.decided_button_no = -1;
+                st.hover_button_no = -1;
+                st.press_keep_button_no = -1;
             }
         }
 
         fn on_group_init(&mut self, stage_idx: i32, group_idx: i32) {
             if let Some(plane) = crate::gui::stage::stage_idx_to_plane(stage_idx) {
-                self.groups
-                    .insert((plane, group_idx), HostGroupState::default());
+                let mut st = HostGroupState::default();
+                st.result = -1;
+                st.result_button_no = -1;
+                st.hit_button_no = -1;
+                st.pushed_button_no = -1;
+                st.decided_button_no = -1;
+                st.on_hit_no = -1;
+                st.on_pushed_no = -1;
+                st.on_decided_no = -1;
+                st.hover_button_no = -1;
+                st.press_keep_button_no = -1;
+                self.groups.insert((plane, group_idx), st);
             }
         }
 
@@ -147,6 +159,27 @@ macro_rules! impl_host_stage_object_methods {
             }
         }
 
+
+        fn on_group_on_hit_no(&mut self, stage_idx: i32, group_idx: i32, button_no: i32) {
+            if let Some(plane) = crate::gui::stage::stage_idx_to_plane(stage_idx) {
+                let st = self.groups.entry((plane, group_idx)).or_default();
+                st.on_hit_no = button_no;
+            }
+        }
+
+        fn on_group_on_pushed_no(&mut self, stage_idx: i32, group_idx: i32, button_no: i32) {
+            if let Some(plane) = crate::gui::stage::stage_idx_to_plane(stage_idx) {
+                let st = self.groups.entry((plane, group_idx)).or_default();
+                st.on_pushed_no = button_no;
+            }
+        }
+
+        fn on_group_on_decided_no(&mut self, stage_idx: i32, group_idx: i32, button_no: i32) {
+            if let Some(plane) = crate::gui::stage::stage_idx_to_plane(stage_idx) {
+                let st = self.groups.entry((plane, group_idx)).or_default();
+                st.on_decided_no = button_no;
+            }
+        }
         fn on_group_end(&mut self, stage_idx: i32, group_idx: i32) {
             if let Some(plane) = crate::gui::stage::stage_idx_to_plane(stage_idx) {
                 if let Some(st) = self.groups.get_mut(&(plane, group_idx)) {
@@ -194,12 +227,73 @@ macro_rules! impl_host_stage_object_methods {
                 st.hit_button_no = -1;
                 st.pushed_button_no = -1;
                 st.decided_button_no = -1;
+                st.hover_button_no = -1;
+                st.press_keep_button_no = -1;
                 st.result = -1;
                 st.result_button_no = -1;
                 st.active = false;
                 let _ = st;
                 self.play_cancel_se(se_no);
                 return Some(-1);
+            }
+
+            let mut direct_decided = None;
+            if let Ok(mut state) = self.input_state.lock() {
+                let cursor = (state.mouse_x as f32, state.mouse_y as f32);
+                let mut object_hit_button = self.group_hit_candidate_button(plane, group_idx, cursor);
+
+                // push_keep: when press started on one button, keep it during hold.
+                if state.mouse_left.is_down {
+                    if st.press_keep_button_no >= 0 {
+                        object_hit_button = Some(st.press_keep_button_no);
+                    }
+                } else if !state.mouse_left.is_down {
+                    st.press_keep_button_no = -1;
+                }
+
+                if let Some(hit) = object_hit_button {
+                    st.hover_button_no = hit;
+                    st.hit_button_no = hit;
+                    if state.mouse_left.is_down {
+                        st.pushed_button_no = hit;
+                        let keep = self
+                            .objects
+                            .iter()
+                            .find_map(|((p, idx), _)| {
+                                if *p != plane {
+                                    return None;
+                                }
+                                let btn = self.get_object_button_state(*p, *idx);
+                                if btn.group_no == group_idx && btn.button_no == hit {
+                                    Some(btn.push_keep != 0)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(false);
+                        st.press_keep_button_no = if keep { hit } else { -1 };
+                    }
+                } else {
+                    st.hover_button_no = -1;
+                    if st.on_hit_no >= 0 && state.mouse_left.has_down_up_stock() {
+                        st.hit_button_no = st.on_hit_no;
+                    }
+                    if st.on_pushed_no >= 0 && state.mouse_left.use_down_up_stock() {
+                        st.pushed_button_no = st.on_pushed_no;
+                    }
+                }
+                if let Some(hit) = object_hit_button.filter(|_| state.decide.use_down_up_stock()) {
+                    direct_decided = Some(hit);
+                } else if st.on_decided_no >= 0 && state.decide.use_down_up_stock() {
+                    direct_decided = Some(st.on_decided_no);
+                }
+            }
+            if let Some(decided) = direct_decided {
+                st.decided_button_no = decided;
+                st.result = decided;
+                st.result_button_no = decided;
+                st.active = false;
+                return Some(decided);
             }
 
             match self.selection_rx.try_recv() {
@@ -210,8 +304,20 @@ macro_rules! impl_host_stage_object_methods {
                         decided = -1;
                         cancel_se_no = st.cancel_se_no;
                     }
+
+                    if st.on_hit_no >= 0 && decided >= 0 && decided != st.on_hit_no {
+                        return None;
+                    }
                     st.hit_button_no = decided;
+
+                    if st.on_pushed_no >= 0 && decided >= 0 && decided != st.on_pushed_no {
+                        return None;
+                    }
                     st.pushed_button_no = decided;
+
+                    if st.on_decided_no >= 0 && decided >= 0 && decided != st.on_decided_no {
+                        return None;
+                    }
                     st.decided_button_no = decided;
                     st.result = decided;
                     st.result_button_no = decided;
@@ -226,6 +332,8 @@ macro_rules! impl_host_stage_object_methods {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     st.result = -1;
                     st.result_button_no = -1;
+                    st.hover_button_no = -1;
+                    st.press_keep_button_no = -1;
                     st.active = false;
                     Some(-1)
                 }
@@ -359,6 +467,41 @@ macro_rules! impl_host_stage_object_methods {
             self.apply_object_command(plane, obj_index, property_id, &[p]);
         }
 
+        fn on_object_get_str(
+            &mut self,
+            list_id: i32,
+            obj_index: i32,
+            sub_id: i32,
+            stage_idx: Option<i32>,
+        ) -> String {
+            self.refresh_movie_lifecycle();
+            if list_id != siglus::elm::objectlist::ELM_STAGE_OBJECT {
+                return String::new();
+            }
+            let Some(plane) = stage_idx.and_then(crate::gui::stage::stage_idx_to_plane) else {
+                return String::new();
+            };
+            match sub_id {
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_FILE_NAME => self
+                    .objects
+                    .get(&(plane, obj_index))
+                    .map(|st| st.file_name.clone())
+                    .unwrap_or_default(),
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_STRING => {
+                    self.get_object_string_state(plane, obj_index)
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_ELEMENT_NAME => {
+                    let stage_name = match plane {
+                        StagePlane::Back => "back",
+                        StagePlane::Front => "front",
+                        StagePlane::Next => "next",
+                    };
+                    format!("global.{stage_name}.object[{obj_index}]")
+                }
+                _ => String::new(),
+            }
+        }
+
         fn on_object_get(
             &mut self,
             list_id: i32,
@@ -387,6 +530,39 @@ macro_rules! impl_host_stage_object_methods {
                 x if x == siglus::elm::objectlist::ELM_OBJECT_ORDER => st.order,
                 x if x == siglus::elm::objectlist::ELM_OBJECT_LAYER => st.layer,
                 x if x == siglus::elm::objectlist::ELM_OBJECT_EXIST_TYPE => 1,
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_NUMBER => {
+                    self.get_object_number_state(plane, obj_index)
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_MOVIE_SEEK_TIME => {
+                    self.get_object_movie_seek_state(plane, obj_index)
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_STATE => {
+                    self.get_object_button_state(plane, obj_index).state
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_HIT_STATE => {
+                    self.get_object_button_state(plane, obj_index).hit_state
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_REAL_STATE => {
+                    self.get_object_button_state(plane, obj_index).real_state
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_PUSHKEEP => {
+                    self.get_object_button_state(plane, obj_index).push_keep
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_ALPHA_TEST => {
+                    self.get_object_button_state(plane, obj_index).alpha_test
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_NO => {
+                    self.get_object_button_state(plane, obj_index).button_no
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_GROUP_NO => {
+                    self.get_object_button_state(plane, obj_index).group_no
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_ACTION_NO => {
+                    self.get_object_button_state(plane, obj_index).action_no
+                }
+                x if x == siglus::elm::objectlist::ELM_OBJECT_GET_BUTTON_SE_NO => {
+                    self.get_object_button_state(plane, obj_index).se_no
+                }
                 _ => 0,
             }
         }

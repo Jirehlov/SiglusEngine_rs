@@ -1,75 +1,6 @@
 use super::*;
-use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+
 impl Vm {
-    pub(super) fn arg_int(args: &[Prop], idx: usize) -> i32 {
-        match args.get(idx).map(|p| &p.value) {
-            Some(PropValue::Int(v)) => *v,
-            _ => 0,
-        }
-    }
-    fn unix_ms_to_stamp(unix_ms: i64) -> LocalSaveStamp {
-        fn civil_from_days(z: i64) -> (i32, i32, i32) {
-            let z = z + 719_468;
-            let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-            let doe = z - era * 146_097;
-            let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-            let y = yoe + era * 400;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = mp + if mp < 10 { 3 } else { -9 };
-            let y = y + if m <= 2 { 1 } else { 0 };
-            (y as i32, m as i32, d as i32)
-        }
-        let unix_sec = unix_ms.div_euclid(1000);
-        let ms = unix_ms.rem_euclid(1000) as i32;
-        let days = unix_sec.div_euclid(86_400);
-        let secs_of_day = unix_sec.rem_euclid(86_400);
-        let hour = (secs_of_day / 3600) as i32;
-        let minute = ((secs_of_day % 3600) / 60) as i32;
-        let second = (secs_of_day % 60) as i32;
-        let (year, month, day) = civil_from_days(days);
-        let weekday = ((days + 4).rem_euclid(7)) as i32;
-        LocalSaveStamp {
-            year,
-            month,
-            day,
-            weekday,
-            hour,
-            minute,
-            second,
-            millisecond: ms,
-        }
-    }
-    pub(super) fn make_local_slot(&self) -> LocalSaveSlot {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let stamp =
-            Self::unix_ms_to_stamp((now.as_secs() as i64) * 1000 + now.subsec_millis() as i64);
-        LocalSaveSlot {
-            stamp,
-            scene_title: self.scene_title.clone(),
-            message: self.last_sel_msg.clone(),
-            state: self.snapshot_local_state(),
-        }
-    }
-    fn first_empty_slot(map: &BTreeMap<i32, LocalSaveSlot>, cnt: i32) -> i32 {
-        for i in 0..cnt.max(0) {
-            if !map.contains_key(&i) {
-                return i;
-            }
-        }
-        -1
-    }
-    fn slot_arg(args: &[Prop], idx: usize) -> Option<i32> {
-        let slot_no = Self::arg_int(args, idx);
-        if slot_no < 0 {
-            return None;
-        }
-        Some(slot_no)
-    }
     pub(super) fn try_command_syscom(
         &mut self,
         element: &[i32],
@@ -95,11 +26,9 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
-                Ok(Some(true))
-            }
-            x if crate::elm::syscom::is_set_se_volume(x) => {
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_set_wipe_anime_onoff(x) => {
@@ -132,7 +61,9 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Ok(Some(true))
             }
             x if x == crate::elm::syscom::ELM_SYSCOM_INIT_SYSCOM_FLAG => {
@@ -160,6 +91,8 @@ impl Vm {
                 self.game_end_flag = 0;
                 self.game_end_no_warning_flag = 0;
                 self.game_end_save_done_flag = 0;
+                self.syscom_cfg = VmSyscomConfigState::default();
+                self.apply_syscom_option_defaults();
                 if ret_form == crate::elm::form::INT {
                     self.stack.push_int(0);
                 }
@@ -188,7 +121,9 @@ impl Vm {
                     }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_set_enable_flag(x) => {
@@ -250,11 +185,17 @@ impl Vm {
                     y if y == crate::elm::syscom::ELM_SYSCOM_SET_LOAD_EXIST_FLAG => {
                         self.load_exist_flag = on
                     }
-                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_ENABLE_FLAG => self.end_game_enable_flag = on,
-                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_EXIST_FLAG => self.end_game_exist_flag = on,
+                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_ENABLE_FLAG => {
+                        self.end_game_enable_flag = on
+                    }
+                    y if y == crate::elm::syscom::ELM_SYSCOM_SET_END_GAME_EXIST_FLAG => {
+                        self.end_game_exist_flag = on
+                    }
                     _ => {}
                 }
-                if ret_form == crate::elm::form::INT { self.stack.push_int(0); }
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Ok(Some(true))
             }
             x if crate::elm::syscom::is_save_or_load(x) => {
@@ -262,7 +203,8 @@ impl Vm {
                 // For load commands that go through the proc queue, we collect
                 // the proc type here and dispatch after the match (because `?`
                 // cannot be used inside a match arm that returns `bool`).
-                let mut pending_load: Option<(super::command_syscom_return::SyscomProcType, i32)> = None;
+                let mut pending_load: Option<(super::command_syscom_return::SyscomProcType, i32)> =
+                    None;
                 let ok = match x {
                     y if y == crate::elm::syscom::ELM_SYSCOM_SAVE => {
                         if let Some(slot_no) = slot_no {
@@ -294,7 +236,10 @@ impl Vm {
                     y if y == crate::elm::syscom::ELM_SYSCOM_LOAD => {
                         if let Some(slot_no) = slot_no {
                             if self.local_save_slots.contains_key(&slot_no) {
-                                pending_load = Some((super::command_syscom_return::SyscomProcType::Load, slot_no));
+                                pending_load = Some((
+                                    super::command_syscom_return::SyscomProcType::Load,
+                                    slot_no,
+                                ));
                                 true
                             } else {
                                 false
@@ -306,7 +251,10 @@ impl Vm {
                     y if y == crate::elm::syscom::ELM_SYSCOM_QUICK_LOAD => {
                         if let Some(slot_no) = slot_no {
                             if self.quick_save_slots.contains_key(&slot_no) {
-                                pending_load = Some((super::command_syscom_return::SyscomProcType::QuickLoad, slot_no));
+                                pending_load = Some((
+                                    super::command_syscom_return::SyscomProcType::QuickLoad,
+                                    slot_no,
+                                ));
                                 true
                             } else {
                                 false
@@ -318,7 +266,10 @@ impl Vm {
                     y if y == crate::elm::syscom::ELM_SYSCOM_INNER_LOAD => {
                         if let Some(slot_no) = slot_no {
                             if self.inner_save_slots.contains_key(&slot_no) {
-                                pending_load = Some((super::command_syscom_return::SyscomProcType::InnerLoad, slot_no));
+                                pending_load = Some((
+                                    super::command_syscom_return::SyscomProcType::InnerLoad,
+                                    slot_no,
+                                ));
                                 true
                             } else {
                                 false
@@ -395,11 +346,26 @@ impl Vm {
                     use super::command_syscom_return::{SyscomProc, SyscomProcType};
                     host.on_game_timer_move(false);
                     let queue = vec![
-                        SyscomProc { proc_type: SyscomProcType::Disp, option: 0 },
-                        SyscomProc { proc_type: SyscomProcType::GameEndWipe, option: 0 },
-                        SyscomProc { proc_type: proc_type, option: sno },
-                        SyscomProc { proc_type: SyscomProcType::GameStartWipe, option: 0 },
-                        SyscomProc { proc_type: SyscomProcType::GameTimerStart, option: 0 },
+                        SyscomProc {
+                            proc_type: SyscomProcType::Disp,
+                            option: 0,
+                        },
+                        SyscomProc {
+                            proc_type: SyscomProcType::GameEndWipe,
+                            option: 0,
+                        },
+                        SyscomProc {
+                            proc_type: proc_type,
+                            option: sno,
+                        },
+                        SyscomProc {
+                            proc_type: SyscomProcType::GameStartWipe,
+                            option: 0,
+                        },
+                        SyscomProc {
+                            proc_type: SyscomProcType::GameTimerStart,
+                            option: 0,
+                        },
                     ];
                     self.run_syscom_proc_queue(&queue, provider, host)?;
                 }
@@ -459,8 +425,10 @@ impl Vm {
                         self.load_enable_flag
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_LOAD_EXIST_FLAG {
                         self.load_exist_flag
-                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_ENABLE_FLAG { self.end_game_enable_flag
-                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_EXIST_FLAG { self.end_game_exist_flag
+                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_ENABLE_FLAG {
+                        self.end_game_enable_flag
+                    } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_GAME_EXIST_FLAG {
+                        self.end_game_exist_flag
                     } else if crate::elm::syscom::is_feature_check_query(x) {
                         if x == crate::elm::syscom::ELM_SYSCOM_CHECK_READ_SKIP_ENABLE {
                             (self.read_skip_enable_flag != 0 && self.read_skip_exist_flag != 0)
@@ -491,7 +459,11 @@ impl Vm {
                         }
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_END_SAVE_EXIST {
                         slot_no
-                            .map(|slot_no| host.on_syscom_end_save_exist(slot_no).unwrap_or(self.end_save_slots.contains_key(&slot_no)) as i32)
+                            .map(|slot_no| {
+                                host.on_syscom_end_save_exist(slot_no)
+                                    .unwrap_or(self.end_save_slots.contains_key(&slot_no))
+                                    as i32
+                            })
                             .unwrap_or(0)
                     } else if x == crate::elm::syscom::ELM_SYSCOM_GET_NO_WIPE_ANIME_ONOFF {
                         self.no_wipe_anime_onoff_flag
@@ -642,82 +614,7 @@ impl Vm {
             x if x == crate::elm::syscom::ELM_SYSCOM_END_LOAD => {
                 self.handle_syscom_end_load(args, ret_form, provider, host)
             }
-            x if x == crate::elm::syscom::ELM_SYSCOM_SET_RETURN_SCENE_ONCE => {
-                let scene_name = match args.first().map(|p| &p.value) {
-                    Some(PropValue::Str(s)) => s.clone(),
-                    _ => String::new(),
-                };
-                let scene_z_no = match args.get(1).map(|p| &p.value) {
-                    Some(PropValue::Int(v)) => *v,
-                    _ => 0,
-                };
-                self.return_scene_once = Some((scene_name, scene_z_no));
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
-                Ok(Some(true))
-            }
-            x if x == crate::elm::syscom::ELM_SYSCOM_GET_SYSTEM_EXTRA_INT_VALUE => {
-                if ret_form == crate::elm::form::INT {
-                    let idx = Self::arg_int(args, 0);
-                    let v = if idx >= 0 {
-                        self.system_extra_int_values
-                            .get(idx as usize)
-                            .copied()
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    self.stack.push_int(v);
-                }
-                Ok(Some(true))
-            }
-            x if x == crate::elm::syscom::ELM_SYSCOM_GET_SYSTEM_EXTRA_STR_VALUE => {
-                let idx = Self::arg_int(args, 0);
-                if ret_form == crate::elm::form::STR {
-                    let s = if idx >= 0 && (idx as usize) < self.system_extra_int_values.len() {
-                        self.system_extra_str_values
-                            .get(idx as usize)
-                            .cloned()
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    self.stack.push_str(s);
-                } else if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
-                Ok(Some(true))
-            }
-            x if crate::elm::syscom::is_open_dialog(x) => {
-                host.on_open_tweet_dialog();
-                if ret_form == crate::elm::form::INT {
-                    self.stack.push_int(0);
-                }
-                Ok(Some(true))
-            }
-            x if crate::elm::syscom::is_call_ex(x) => {
-                let scene = match args.get(0).map(|p| &p.value) {
-                    Some(PropValue::Str(s)) => s.as_str(),
-                    _ => "",
-                };
-                let z_no = match args.get(1).map(|p| &p.value) {
-                    Some(PropValue::Int(v)) => *v,
-                    _ => 0,
-                };
-                if !scene.is_empty() {
-                    let call_args = if args.len() >= 2 { &args[2..] } else { &[] };
-                    self.proc_farcall_like(
-                        scene,
-                        z_no,
-                        crate::elm::form::VOID,
-                        call_args,
-                        provider,
-                    )?;
-                }
-                Ok(Some(true))
-            }
-            _ => Ok(None),
+            _ => self.try_command_syscom_misc(x, args, ret_form, provider, host),
         }
     }
 }

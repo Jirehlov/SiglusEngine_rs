@@ -1,5 +1,8 @@
 use super::*;
 
+const MOVIE_EXT_CANDIDATES: &[&str] = &["omv", "wmv", "mp4", "avi", "mpg", "mpeg", "mkv", "webm"];
+const TEXT_EXT_CANDIDATES: &[&str] = &["txt", "ks", "snr"];
+
 pub(super) fn collect_append_dirs(base_dir: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![base_dir.to_path_buf()];
     if let Ok(rd) = std::fs::read_dir(base_dir) {
@@ -134,6 +137,42 @@ fn format_attempts_for_log(attempts: &[PathBuf]) -> String {
         lines.push(format!("... and {} more", attempts.len() - MAX_ATTEMPTS));
     }
     lines.join(" | ")
+}
+
+pub(super) fn resource_exists_like_cpp(
+    base_dir: &Path,
+    append_dirs: &[PathBuf],
+    file_name: &str,
+) -> bool {
+    resource_exists_like_cpp_with_kind(
+        base_dir,
+        append_dirs,
+        file_name,
+        siglus::vm::VmResourceKind::Generic,
+    )
+}
+
+pub(super) fn resource_exists_like_cpp_with_kind(
+    base_dir: &Path,
+    append_dirs: &[PathBuf],
+    file_name: &str,
+    kind: siglus::vm::VmResourceKind,
+) -> bool {
+    resolve_resource_path_like_cpp(base_dir, append_dirs, file_name, kind).is_some()
+}
+
+pub(super) fn read_text_like_cpp(
+    base_dir: &Path,
+    append_dirs: &[PathBuf],
+    file_name: &str,
+) -> Option<String> {
+    let resolved = resolve_resource_path_like_cpp(
+        base_dir,
+        append_dirs,
+        file_name,
+        siglus::vm::VmResourceKind::Text,
+    )?;
+    std::fs::read_to_string(resolved).ok()
 }
 
 pub(super) fn load_stage_like_cpp(
@@ -306,4 +345,83 @@ fn load_image_by_path(path: &Path, pat_no: usize) -> Result<image::DynamicImage>
 
     let img = image::open(path).with_context(|| format!("decode image {}", path.display()))?;
     Ok(img)
+}
+
+fn resolve_resource_path_like_cpp(
+    base_dir: &Path,
+    append_dirs: &[PathBuf],
+    file_name: &str,
+    kind: siglus::vm::VmResourceKind,
+) -> Option<PathBuf> {
+    if file_name.is_empty() {
+        return None;
+    }
+    let rel_owned = normalize_relative_path(Path::new(file_name));
+    if rel_owned.is_absolute() && rel_owned.exists() {
+        return Some(rel_owned);
+    }
+
+    let has_ext = rel_owned.extension().and_then(OsStr::to_str).is_some();
+    let mut ext_candidates: Vec<&str> = Vec::new();
+    if let Some(ext) = rel_owned.extension().and_then(OsStr::to_str) {
+        ext_candidates.push(ext);
+    }
+    let fallback_exts: &[&str] = match kind {
+        siglus::vm::VmResourceKind::Image => IMAGE_EXT_CANDIDATES,
+        siglus::vm::VmResourceKind::Movie => MOVIE_EXT_CANDIDATES,
+        siglus::vm::VmResourceKind::Text => TEXT_EXT_CANDIDATES,
+        siglus::vm::VmResourceKind::Generic => &[],
+    };
+    for ext in fallback_exts {
+        if !ext_candidates.iter().any(|e| e.eq_ignore_ascii_case(ext)) {
+            ext_candidates.push(ext);
+        }
+    }
+
+    let mut rel_candidates = vec![rel_owned.clone()];
+    if matches!(kind, siglus::vm::VmResourceKind::Image) && !has_trailing_ascii_digits(&rel_owned) {
+        rel_candidates.push(with_numeric_suffix(&rel_owned, "00"));
+    }
+
+    let mut bases: Vec<PathBuf> = append_dirs.to_vec();
+    if !bases.iter().any(|p| p == base_dir) {
+        bases.insert(0, base_dir.to_path_buf());
+    }
+
+    for base in bases {
+        for rel in &rel_candidates {
+            if let Some(found) = resolve_existing_relative_case_insensitive(&base, rel) {
+                return Some(found);
+            }
+        }
+
+        for rel in &rel_candidates {
+            let mut stem = rel.clone();
+            stem.set_extension("");
+            if stem.as_os_str().is_empty() {
+                stem = rel.clone();
+            }
+            for ext in &ext_candidates {
+                let rel_ext = rel.with_extension(ext);
+                if let Some(found) = resolve_existing_relative_case_insensitive(&base, &rel_ext) {
+                    return Some(found);
+                }
+
+                if matches!(kind, siglus::vm::VmResourceKind::Image) {
+                    let rel_g00 = Path::new("g00").join(&stem).with_extension(ext);
+                    if let Some(found) = resolve_existing_relative_case_insensitive(&base, &rel_g00)
+                    {
+                        return Some(found);
+                    }
+                    if let Some(found) =
+                        search_image_in_child_dirs(&base, &stem, ext, &mut Vec::new())
+                    {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }

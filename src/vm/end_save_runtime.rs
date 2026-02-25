@@ -88,6 +88,8 @@ impl Vm {
                 return_scene: f.return_scene.clone(),
                 return_line_no: f.return_line_no,
                 expect_ret_form: f.expect_ret_form,
+                call_type: f.call_type as i32,
+                excall_flag: f.excall_flag,
                 frame_action_flag: f.frame_action_flag,
                 arg_cnt: f.arg_cnt,
                 call_l: f.call.l.clone(),
@@ -113,6 +115,7 @@ impl Vm {
             stack_strs: self.stack.strs.clone(),
             stack_points: self.stack.points.clone(),
             frames,
+            proc_stack: self.proc_stack.iter().map(|p| *p as i32).collect(),
             user_prop_forms: self.user_prop_forms.clone(),
             user_prop_values: self
                 .user_prop_values
@@ -185,6 +188,13 @@ impl Vm {
                 return_dat,
                 return_line_no: f.return_line_no,
                 expect_ret_form: f.expect_ret_form,
+                call_type: match f.call_type {
+                    1 => VmCallType::Gosub,
+                    2 => VmCallType::Farcall,
+                    3 => VmCallType::UserCmd,
+                    _ => VmCallType::None,
+                },
+                excall_flag: f.excall_flag,
                 frame_action_flag: f.frame_action_flag,
                 arg_cnt: f.arg_cnt,
                 call: CallContext {
@@ -213,6 +223,8 @@ impl Vm {
                 return_dat: dat,
                 return_line_no: 0,
                 expect_ret_form: crate::elm::form::VOID,
+                call_type: VmCallType::None,
+                excall_flag: false,
                 frame_action_flag: false,
                 arg_cnt: 0,
                 call: CallContext::new(DEFAULT_CALL_FLAG_CNT),
@@ -237,6 +249,18 @@ impl Vm {
             .collect();
 
         self.frames = frames;
+        self.proc_stack = if rt.proc_stack.is_empty() {
+            vec![VmProcType::Script]
+        } else {
+            rt.proc_stack
+                .iter()
+                .map(|v| match *v {
+                    1 => VmProcType::Script,
+                    _ => VmProcType::None,
+                })
+                .collect()
+        };
+        self.reconcile_proc_stack();
 
         self.user_prop_forms = rt.user_prop_forms.clone();
         self.user_prop_values = rt

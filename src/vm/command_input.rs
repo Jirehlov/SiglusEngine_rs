@@ -224,9 +224,27 @@ impl Vm {
             form: crate::elm::form::INT,
             value: PropValue::Int(value),
         };
-        match self.try_assign_internal(&element, 1, &rhs) {
+        match self.try_assign_internal(&element, 1, &rhs, host) {
             Ok(true) => {}
-            Ok(false) | Err(_) => host.on_assign(&element, 1, &rhs),
+            Ok(false) => {
+                if element.is_empty() {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        "command_input assign writeback failed: empty target element",
+                    );
+                } else {
+                    host.on_assign(&element, 1, &rhs)
+                }
+            }
+            Err(e) => {
+                self.report_vm_fatal_with_context(
+                    host,
+                    &format!(
+                        "command_input assign writeback failed: target={:?} rhs={:?} err={}",
+                        element, rhs.value, e
+                    ),
+                );
+            }
         }
     }
 

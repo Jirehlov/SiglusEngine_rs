@@ -19,6 +19,14 @@ pub struct VmPersistentState {
     pub local_namae: Vec<String>,
     pub save_point_set: bool,
     pub sel_point_set: bool,
+    pub counter_values: Vec<i32>,
+    pub counter_active: Vec<bool>,
+    pub cg_table_off_flag: bool,
+    pub cg_flags: Vec<i32>,
+    pub cg_name_to_flag: std::collections::BTreeMap<String, i32>,
+    pub cg_group_codes: Vec<[i32; 5]>,
+    pub cg_code_exist_cnt: Vec<i32>,
+    pub bgm_name_listened: std::collections::BTreeMap<String, bool>,
 }
 
 impl VmPersistentState {
@@ -180,6 +188,14 @@ impl VmPersistentState {
             local_namae: read_str_vec(&mut cur)?,
             save_point_set: read_exact::<1>(&mut cur)?[0] != 0,
             sel_point_set: read_exact::<1>(&mut cur)?[0] != 0,
+            counter_values: Vec::new(),
+            counter_active: Vec::new(),
+            cg_table_off_flag: false,
+            cg_flags: Vec::new(),
+            cg_name_to_flag: std::collections::BTreeMap::new(),
+            cg_group_codes: Vec::new(),
+            cg_code_exist_cnt: Vec::new(),
+            bgm_name_listened: std::collections::BTreeMap::new(),
         };
 
         if cur.position() != bytes.len() as u64 {

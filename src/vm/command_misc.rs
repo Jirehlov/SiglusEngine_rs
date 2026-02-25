@@ -1,7 +1,61 @@
 use super::*;
 
-
 impl Vm {
+    fn expected_proc_stack_depth(&self) -> usize {
+        1 + self
+            .frames
+            .iter()
+            .skip(1)
+            .filter(|f| f.excall_flag || f.frame_action_flag)
+            .count()
+    }
+
+    pub(super) fn reconcile_proc_stack(&mut self) {
+        let need = self.expected_proc_stack_depth();
+        if self.proc_stack.len() > need {
+            self.proc_stack.truncate(need.max(1));
+        } else {
+            while self.proc_stack.len() < need {
+                self.proc_stack.push(VmProcType::Script);
+            }
+        }
+    }
+
+    pub(super) fn truncate_frames_with_proc_sync(&mut self, dst: usize, host: &mut dyn Host) {
+        let cur = self.frames.len();
+        let dst = dst.clamp(1, cur);
+        if dst >= cur {
+            return;
+        }
+        let dropped = &self.frames[dst..];
+        let dropped_excall = dropped.iter().any(|f| f.excall_flag);
+        let _dropped_frame_action = dropped.iter().any(|f| f.frame_action_flag);
+        self.frames.truncate(dst);
+        self.reconcile_proc_stack();
+        if dropped_excall {
+            host.on_input_clear();
+        }
+    }
+
+    pub(super) fn push_script_proc(&mut self) {
+        self.proc_stack.push(VmProcType::Script);
+    }
+
+    pub(super) fn pop_script_proc(&mut self) {
+        if self.proc_stack.len() > 1 {
+            self.proc_stack.pop();
+        }
+    }
+
+    pub(super) fn observe_proc_stack_tuple(&self) -> (i32, i32) {
+        let depth = self.proc_stack.len() as i32;
+        let top = match self.proc_stack.last().copied().unwrap_or(VmProcType::None) {
+            VmProcType::None => 0,
+            VmProcType::Script => 1,
+        };
+        (depth, top)
+    }
+
     pub(super) fn command_proc_frame_action(
         fa: &mut FrameAction,
         chain: &[i32],
@@ -126,7 +180,9 @@ impl Vm {
         args: &[Prop],
         ret_form: i32,
         frame_action_flag: bool,
+        ex_call_flag: bool,
         provider: &mut dyn SceneProvider,
+        host: &mut dyn Host,
     ) -> Result<()> {
         // Set return type expectation on the caller.
         if let Some(frame) = self.frames.last_mut() {
@@ -144,10 +200,15 @@ impl Vm {
             return_dat,
             return_line_no,
             expect_ret_form: crate::elm::form::VOID,
+            call_type: VmCallType::UserCmd,
+            excall_flag: ex_call_flag,
             frame_action_flag,
             arg_cnt: args.len(),
             call: CallContext::new(DEFAULT_CALL_FLAG_CNT),
         });
+        if ex_call_flag || frame_action_flag {
+            self.push_script_proc();
+        }
 
         // Push args in forward order (C++ behaviour).
         for a in args {
@@ -168,6 +229,13 @@ impl Vm {
                 self.lexer.set_scene(dat);
                 self.reload_user_props_from_current_scene();
                 if offset < 0 {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!(
+                            "CD_COMMAND usercmd: id={} has negative offset {}",
+                            user_cmd_id, offset
+                        ),
+                    );
                     bail!(
                         "lexer: user_cmd {} has negative offset {}",
                         user_cmd_id,
@@ -176,11 +244,24 @@ impl Vm {
                 }
                 self.lexer.pc = offset as usize;
             } else {
+                self.report_vm_fatal_with_context(
+                    host,
+                    &format!("CD_COMMAND usercmd: id={} not found", user_cmd_id),
+                );
                 bail!("lexer: user_cmd {} not found", user_cmd_id);
             }
         } else {
             let scn_cmd_no = user_cmd_id - inc_cnt;
-            self.lexer.jump_to_scn_cmd_index(scn_cmd_no)?;
+            self.lexer.jump_to_scn_cmd_index(scn_cmd_no).map_err(|e| {
+                self.report_vm_fatal_with_context(
+                    host,
+                    &format!(
+                        "CD_COMMAND usercmd: jump_to_scn_cmd_index({}) failed: {}",
+                        scn_cmd_no, e
+                    ),
+                );
+                e
+            })?;
         }
         Ok(())
     }
@@ -190,6 +271,7 @@ impl Vm {
         scene: &str,
         z_no: i32,
         provider: &mut dyn SceneProvider,
+        host: &mut dyn Host,
     ) -> Result<()> {
         let dat = provider.get_scene(scene)?;
         self.scene = scene.to_string();
@@ -205,7 +287,9 @@ impl Vm {
         z_no: i32,
         expect_ret_form: i32,
         call_args: &[Prop],
+        ex_call_flag: bool,
         provider: &mut dyn SceneProvider,
+        host: &mut dyn Host,
     ) -> Result<()> {
         // Set return type expectation on the caller.
         if let Some(frame) = self.frames.last_mut() {
@@ -223,10 +307,15 @@ impl Vm {
             return_dat,
             return_line_no,
             expect_ret_form: crate::elm::form::VOID,
+            call_type: VmCallType::Farcall,
+            excall_flag: ex_call_flag,
             frame_action_flag: false,
             arg_cnt: 0,
             call: CallContext::new(DEFAULT_CALL_FLAG_CNT),
         });
+        if ex_call_flag {
+            self.push_script_proc();
+        }
 
         // Populate call.L / call.K (best-effort; matches C++ farcall arg expansion).
         {
@@ -260,5 +349,4 @@ impl Vm {
         self.lexer.jump_to_z_label(z_no)?;
         Ok(())
     }
-
 }

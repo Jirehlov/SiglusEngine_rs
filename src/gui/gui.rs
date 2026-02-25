@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Instant;
 
@@ -13,10 +13,11 @@ use simplelog::{Config, LevelFilter, WriteLogger};
 
 mod gui_assets;
 mod gui_config;
+mod resource_bootstrap;
 mod stage;
 
 use gui_assets::*;
-use gui_config::{load_run_config, RunConfig};
+use gui_config::{RunConfig, load_run_config};
 use stage::{
     is_visual_or_flow_command, looks_like_stage_object_path, parse_stage_object_command,
     parse_stage_object_prop, parse_stage_plane_command, summarize_props,
@@ -60,147 +61,22 @@ const SEL_BUTTON_HOVER_BG: egui::Color32 =
 // ── Host events (VM thread → GUI thread) ────────────────────────────────
 
 include!("wipe_direction.rs");
+include!("host_events.rs");
 
-enum HostEvent {
-    Name(String),
-    Text {
-        text: String,
-    },
-    Selection(Vec<String>),
-    LoadImage {
-        image: Arc<image::DynamicImage>,
-    },
-    LoadPlaneImage {
-        stage: StagePlane,
-        image: Arc<image::DynamicImage>,
-    },
-    MissingPlaneImage {
-        stage: StagePlane,
-        name: String,
-    },
-    UpsertObjectImage {
-        stage: StagePlane,
-        index: i32,
-        image: Arc<image::DynamicImage>,
-    },
-    MissingObjectImage {
-        stage: StagePlane,
-        index: i32,
-        name: String,
-    },
-    SetObjectPos {
-        stage: StagePlane,
-        index: i32,
-        x: f32,
-        y: f32,
-    },
-    SetObjectVisible {
-        stage: StagePlane,
-        index: i32,
-        visible: bool,
-    },
-    RemoveObject {
-        stage: StagePlane,
-        index: i32,
-    },
-    SetObjectSort {
-        stage: StagePlane,
-        index: i32,
-        order: i32,
-        layer: i32,
-        seq: u64,
-    },
-    SetObjectRenderState {
-        stage: StagePlane,
-        index: i32,
-        center_x: f32,
-        center_y: f32,
-        scale_x: f32,
-        scale_y: f32,
-        rotate_z_deg: f32,
-        alpha: f32,
-        dst_clip_use: bool,
-        dst_clip_left: f32,
-        dst_clip_top: f32,
-        dst_clip_right: f32,
-        dst_clip_bottom: f32,
-        src_clip_use: bool,
-        src_clip_left: f32,
-        src_clip_top: f32,
-        src_clip_right: f32,
-        src_clip_bottom: f32,
-    },
-    ClearPlaneObjects {
-        stage: StagePlane,
-    },
-    Location {
-        scene_title: String,
-        scene: String,
-        line_no: i32,
-    },
-    MessageWindowVisible(bool),
-    MsgBackState(bool),
-    MsgBackDisplayEnabled(bool),
-    OpenTweetDialog,
-    ConfirmReturnToMenuWarning,
-    StartWipe {
-        duration_ms: u64,
-        wipe_type: i32,
-        wipe_direction: WipeDirection,
-    },
-    SetCursorPos {
-        x: i32,
-        y: i32,
-    },
-    PlayBgm {
-        name: String,
-        loop_flag: bool,
-        fade_in_ms: i32,
-    },
-    StopBgm {
-        fade_out_ms: i32,
-    },
-    PlaySe {
-        name: String,
-    },
-    StopSe,
-    PlayPcm {
-        ch: i32,
-        name: String,
-        loop_flag: bool,
-    },
-    StopPcm {
-        ch: i32,
-    },
-    PlayObjectMovie {
-        stage: StagePlane,
-        index: i32,
-        file_name: String,
-        duration_ms: i32,
-        generation: u64,
-    },
-    StopObjectMovie {
-        stage: StagePlane,
-        index: i32,
-        generation: u64,
-    },
-    StartQuake {
-        req: siglus::vm::VmQuakeRequest,
-        started_at: Instant,
-    },
-    EndQuake,
-    Done,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VmErrorFilter {
+    All,
+    FatalOnly,
+    FileNotFoundOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VmErrorSort {
+    TimeDesc,
+    SceneLineAsc,
 }
 
 include!("movie_events.rs");
-
-// ── Advance signal (GUI thread → VM thread) ─────────────────────────────
-
-/// Sent by the GUI to unblock the VM when the user clicks to advance text.
-enum AdvanceSignal {
-    Proceed,
-    Shutdown,
-}
 
 include!("stage_plane.rs");
 
@@ -264,7 +140,7 @@ struct ObjectRenderState {
     src_clip_bottom: f32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct HostGroupState {
     order: i32,
     layer: i32,
@@ -274,20 +150,51 @@ struct HostGroupState {
     decided_button_no: i32,
     result: i32,
     result_button_no: i32,
+    on_hit_no: i32,
+    on_pushed_no: i32,
+    on_decided_no: i32,
+    hover_button_no: i32,
+    press_keep_button_no: i32,
     active: bool,
     cancel_enabled: bool,
     cancel_se_no: i32,
 }
 
-#[derive(Debug, Clone)]
-struct IntEventState {
-    start_val: i32,
-    end_val: i32,
-    duration_ms: i32,
-    started_at: Instant,
+impl Default for HostGroupState {
+    fn default() -> Self {
+        Self {
+            order: 0,
+            layer: 0,
+            cancel_priority: 0,
+            hit_button_no: -1,
+            pushed_button_no: -1,
+            decided_button_no: -1,
+            result: -1,
+            result_button_no: -1,
+            on_hit_no: -1,
+            on_pushed_no: -1,
+            on_decided_no: -1,
+            hover_button_no: -1,
+            press_keep_button_no: -1,
+            active: false,
+            cancel_enabled: false,
+            cancel_se_no: -1,
+        }
+    }
 }
 
+include!("int_event_state.rs");
+
 // ── VM Host implementation ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default)]
+struct HostCaptureBuffer {
+    width: i32,
+    height: i32,
+    origin_x: i32,
+    origin_y: i32,
+    png_path: String,
+}
 
 struct GuiHost {
     event_tx: mpsc::Sender<HostEvent>,
@@ -321,6 +228,11 @@ struct GuiHost {
     int_events: std::collections::HashMap<i32, IntEventState>,
     input_state: Arc<Mutex<SharedInputState>>,
     cancel_se_map: BTreeMap<i32, String>,
+    vm_scene: String,
+    vm_line_no: i32,
+    vm_pc: usize,
+    vm_element: Vec<i32>,
+    capture_buffer: Option<HostCaptureBuffer>,
 }
 
 include!("prop_int_ext.rs");
@@ -357,6 +269,18 @@ struct GuiApp {
     tweet_status_line: String,
     tweet_confirm_empty: bool,
     show_return_to_menu_warning: bool,
+    latest_vm_error: Option<(VmErrorLevel, String, Instant, VmErrorContext)>,
+    vm_error_history: Vec<(VmErrorLevel, String, Instant, VmErrorContext)>,
+    vm_error_last_copied: Option<String>,
+    vm_error_copy_notice_until: Option<Instant>,
+    vm_error_filter_recent_copy: bool,
+    vm_error_copy_history: Vec<String>,
+    vm_error_copy_selected: BTreeSet<String>,
+    vm_error_pinned: BTreeSet<String>,
+    show_vm_error_panel: bool,
+    vm_error_filter: VmErrorFilter,
+    vm_error_search: String,
+    vm_error_sort: VmErrorSort,
     background_texture: Option<egui::TextureHandle>,
     background_textures: BTreeMap<StagePlane, egui::TextureHandle>,
     missing_background_names: BTreeMap<StagePlane, String>,
@@ -370,6 +294,7 @@ struct GuiApp {
     location_scene_title: String,
     location_scene: String,
     location_line_no: i32,
+    location_pc: usize,
     last_window_title: String,
     scene_size: Option<(i32, i32)>,
     wipe_started_at: Option<Instant>,
@@ -430,6 +355,8 @@ impl eframe::App for GuiApp {
 
                 self.draw_return_to_menu_warning(ui);
                 self.draw_tweet_dialog(ui);
+                self.draw_vm_error_panel(ui);
+                self.draw_vm_error_overlay(ui);
                 self.draw_wipe_overlay(ui);
             });
 
@@ -592,6 +519,11 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 int_events: std::collections::HashMap::new(),
                 input_state: worker_input_state,
                 cancel_se_map: cancel_se_map.clone(),
+                vm_scene: String::new(),
+                vm_line_no: 0,
+                vm_pc: 0,
+                vm_element: Vec::new(),
+                capture_buffer: None,
             };
 
             let state_in = match load_persistent_state(&args.persistent_state_path) {
@@ -611,6 +543,25 @@ fn run_gui(args: RunConfig) -> Result<()> {
                     return_menu_scene: Some((args.menu_scene.clone(), args.menu_z)),
                     system_extra_int_values: args.system_extra_int_values.clone(),
                     system_extra_str_values: args.system_extra_str_values.clone(),
+                    default_global_extra_switch: args.default_global_extra_switch.clone(),
+                    default_global_extra_mode: args.default_global_extra_mode.clone(),
+                    default_object_disp: args.default_object_disp.clone(),
+                    default_local_extra_mode_value: args.default_local_extra_mode_value.clone(),
+                    default_local_extra_mode_enable: args.default_local_extra_mode_enable.clone(),
+                    default_local_extra_mode_exist: args.default_local_extra_mode_exist.clone(),
+                    default_local_extra_switch_onoff: args.default_local_extra_switch_onoff.clone(),
+                    default_local_extra_switch_enable: args
+                        .default_local_extra_switch_enable
+                        .clone(),
+                    default_local_extra_switch_exist: args.default_local_extra_switch_exist.clone(),
+                    default_global_extra_switch_cnt: args.default_global_extra_switch_cnt,
+                    default_global_extra_mode_cnt: args.default_global_extra_mode_cnt,
+                    default_object_disp_cnt: args.default_object_disp_cnt,
+                    default_local_extra_mode_cnt: args.default_local_extra_mode_cnt,
+                    default_local_extra_switch_cnt: args.default_local_extra_switch_cnt,
+                    default_charakoe_cnt: args.default_charakoe_cnt,
+                    default_charakoe_onoff: args.default_charakoe_onoff.clone(),
+                    default_charakoe_volume: args.default_charakoe_volume.clone(),
                     load_wipe_type: args.load_wipe_type,
                     load_wipe_time_ms: args.load_wipe_time_ms,
                     load_after_call_scene: args.load_after_call.as_ref().map(|(s, _)| s.clone()),
@@ -619,6 +570,17 @@ fn run_gui(args: RunConfig) -> Result<()> {
                         .as_ref()
                         .map(|(_, z)| *z)
                         .unwrap_or(0),
+                    preloaded_database_tables: args.preload_database_tables.clone(),
+                    preloaded_database_row_calls: args.preload_database_row_calls.clone(),
+                    preloaded_database_col_calls: args.preload_database_col_calls.clone(),
+                    preloaded_database_col_types: args.preload_database_col_types.clone(),
+                    preloaded_cg_flag_count: args.preload_cg_flag_count,
+                    preloaded_cg_name_to_flag: args.preload_cg_name_to_flag.clone(),
+                    preloaded_cg_group_codes: args.preload_cg_group_codes.clone(),
+                    preloaded_cg_code_exist_cnt: args.preload_cg_code_exist_cnt.clone(),
+                    preloaded_bgm_names: args.preload_bgm_names.clone(),
+                    preloaded_counter_count: args.preload_counter_count,
+                    preloaded_frame_action_ch_count: args.preload_frame_action_ch_count,
                     flick_scene_routes: args.flick_scene_routes.clone(),
                     ..siglus::vm::VmOptions::default()
                 },

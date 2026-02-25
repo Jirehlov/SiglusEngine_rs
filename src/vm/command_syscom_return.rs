@@ -22,6 +22,27 @@ pub(super) struct SyscomProc {
 }
 
 impl Vm {
+    fn syscom_wait_owner_for_proc_step(proc_type: SyscomProcType) -> i32 {
+        match proc_type {
+            SyscomProcType::ReturnToMenu => crate::vm::SYSCOM_WAIT_OWNER_PROC_RETURN_TO_MENU,
+            SyscomProcType::ReturnToSel => crate::vm::SYSCOM_WAIT_OWNER_PROC_RETURN_TO_SEL,
+            SyscomProcType::EndGame => crate::vm::SYSCOM_WAIT_OWNER_PROC_END_GAME,
+            _ => crate::vm::SYSCOM_WAIT_OWNER_PROC_BASE - proc_type as i32,
+        }
+    }
+
+    fn notify_syscom_proc_wait_observation(&self, host: &mut dyn Host, owner_id: i32) {
+        let (proc_depth, proc_top) = self.observe_proc_stack_tuple();
+        host.on_int_event_wait_status(owner_id, false, crate::vm::EVE_WAIT_DONE);
+        host.on_int_event_wait_status_with_proc(
+            owner_id,
+            false,
+            crate::vm::EVE_WAIT_DONE,
+            proc_depth,
+            proc_top,
+        );
+    }
+
     fn notify_load_flow_state(&mut self, host: &mut dyn Host) {
         host.on_syscom_load_flow_state(VmLoadFlowState {
             system_wipe_flag: self.system_wipe_flag != 0,
@@ -36,8 +57,15 @@ impl Vm {
         provider: &mut dyn SceneProvider,
         host: &mut dyn Host,
     ) -> Result<()> {
-        self.game_timer_move_flag = 0;
+        if self.game_timer_move_flag != 0 {
+            self.game_timer_move_flag = 0;
+            host.on_game_timer_move(false);
+        }
         for proc in queue.iter().copied() {
+            self.notify_syscom_proc_wait_observation(
+                host,
+                Self::syscom_wait_owner_for_proc_step(proc.proc_type),
+            );
             match proc.proc_type {
                 SyscomProcType::Disp => {
                     // C++ reference: eng_syscom.cpp fade-out branches push TNM_PROC_TYPE_DISP.
@@ -72,7 +100,7 @@ impl Vm {
                     if let Some((scene, z)) = target {
                         self.proc_jump(&scene, z, provider)?;
                         if self.frames.len() > 1 {
-                            self.frames.truncate(1);
+                            self.truncate_frames_with_proc_sync(1, host);
                         }
                         if !leave_msgbk {
                             // C++ reference: flow_proc.cpp::tnm_return_to_menu_proc +
@@ -97,12 +125,15 @@ impl Vm {
                     if let Some(sel_state) = self.sel_point_snapshot.clone() {
                         self.apply_persistent_state(&sel_state);
                         self.clear_transient_flow_state();
+                        self.system_wipe_flag = 1;
+                        self.do_frame_action_flag = 1;
+                        self.do_load_after_call_flag = 1;
+                        self.notify_load_flow_state(host);
+                        host.on_syscom_proc_return_to_sel();
+                    } else {
+                        host.on_trace("vm: syscom return_to_sel skipped (no sel snapshot)");
+                        self.notify_load_flow_state(host);
                     }
-                    self.system_wipe_flag = 1;
-                    self.do_frame_action_flag = 1;
-                    self.do_load_after_call_flag = 1;
-                    self.notify_load_flow_state(host);
-                    host.on_syscom_proc_return_to_sel();
                 }
                 SyscomProcType::GameTimerStart => {
                     // C++ reference: flow_proc.cpp::tnm_game_timer_start_proc.
@@ -141,42 +172,62 @@ impl Vm {
                     let slot_no = proc.option;
                     if let Some(slot) = self.local_save_slots.get(&slot_no).cloned() {
                         self.apply_local_state(&slot.state);
+                        self.system_wipe_flag = 1;
+                        self.do_frame_action_flag = 1;
+                        self.do_load_after_call_flag = 1;
+                        self.notify_load_flow_state(host);
+                        self.clear_transient_flow_state();
+                    } else {
+                        host.on_trace(&format!(
+                            "vm: syscom load skipped (missing slot={})",
+                            slot_no
+                        ));
+                        self.notify_load_flow_state(host);
                     }
-                    self.system_wipe_flag = 1;
-                    self.do_frame_action_flag = 1;
-                    self.do_load_after_call_flag = 1;
-                    self.notify_load_flow_state(host);
-                    self.clear_transient_flow_state();
                 }
                 SyscomProcType::QuickLoad => {
                     // C++ reference: flow_proc.cpp::tnm_quick_load_proc.
                     let slot_no = proc.option;
                     if let Some(slot) = self.quick_save_slots.get(&slot_no).cloned() {
                         self.apply_local_state(&slot.state);
+                        self.system_wipe_flag = 1;
+                        self.do_frame_action_flag = 1;
+                        self.do_load_after_call_flag = 1;
+                        self.notify_load_flow_state(host);
+                        self.clear_transient_flow_state();
+                    } else {
+                        host.on_trace(&format!(
+                            "vm: syscom quick_load skipped (missing slot={})",
+                            slot_no
+                        ));
+                        self.notify_load_flow_state(host);
                     }
-                    self.system_wipe_flag = 1;
-                    self.do_frame_action_flag = 1;
-                    self.do_load_after_call_flag = 1;
-                    self.notify_load_flow_state(host);
-                    self.clear_transient_flow_state();
                 }
                 SyscomProcType::InnerLoad => {
                     // C++ reference: flow_proc.cpp::tnm_inner_load_proc.
                     let slot_no = proc.option;
                     if let Some(slot) = self.inner_save_slots.get(&slot_no).cloned() {
                         self.apply_local_state(&slot.state);
+                        self.system_wipe_flag = 1;
+                        self.do_frame_action_flag = 1;
+                        self.do_load_after_call_flag = 1;
+                        self.notify_load_flow_state(host);
+                        self.clear_transient_flow_state();
+                    } else {
+                        host.on_trace(&format!(
+                            "vm: syscom inner_load skipped (missing slot={})",
+                            slot_no
+                        ));
+                        self.notify_load_flow_state(host);
                     }
-                    self.system_wipe_flag = 1;
-                    self.do_frame_action_flag = 1;
-                    self.do_load_after_call_flag = 1;
-                    self.notify_load_flow_state(host);
-                    self.clear_transient_flow_state();
                 }
             }
         }
         // C++ eng_frame.cpp::frame_action_proc runs after the proc queue in the
         // same frame. Consume do_load_after_call_flag → farcall dispatch here.
         self.frame_action_proc(host, provider)?;
+        // frame_action_proc may consume do_load_after_call_flag; publish final flow state.
+        self.notify_load_flow_state(host);
         Ok(())
     }
 

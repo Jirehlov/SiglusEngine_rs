@@ -37,9 +37,9 @@ impl Vm {
             }
             // Call stack management stubs
             x if crate::elm::global::is_init_call_stack(x) => {
-                // Clear all frames except the root one
+                // Clear all frames except the root one.
                 if self.frames.len() > 1 {
-                    self.frames.truncate(1);
+                    self.truncate_frames_with_proc_sync(1, host);
                 }
                 return Ok(Some(true));
             }
@@ -48,7 +48,9 @@ impl Vm {
                     if *n > 0 {
                         let cur = self.frames.len();
                         let dst = cur.saturating_sub(*n as usize).max(1);
-                        self.frames.truncate(dst);
+                        if dst < cur {
+                            self.truncate_frames_with_proc_sync(dst, host);
+                        }
                     }
                 }
                 return Ok(Some(true));
@@ -64,7 +66,7 @@ impl Vm {
                         let cur = self.frames.len();
                         let dst = *dst_cnt as usize;
                         if dst < cur {
-                            self.frames.truncate(dst);
+                            self.truncate_frames_with_proc_sync(dst, host);
                         }
                     }
                 }
@@ -100,7 +102,7 @@ impl Vm {
                     self.proc_jump(&scene, z, provider)?;
                     // RETURNMENU is a hard flow reset to menu: keep only root frame.
                     if self.frames.len() > 1 {
-                        self.frames.truncate(1);
+                        self.truncate_frames_with_proc_sync(1, host);
                     }
                     // Reset transient per-flow runtime state.
                     self.clear_transient_flow_state();
@@ -242,6 +244,7 @@ impl Vm {
                         z_no,
                         crate::elm::form::INT,
                         call_args,
+                        false,
                         provider,
                     )?;
                 }
@@ -292,8 +295,17 @@ impl Vm {
                     m if crate::elm::system::is_messagebox(m)
                         || crate::elm::system::is_debug_messagebox(m) =>
                     {
+                        let text = match args.first().map(|p| &p.value) {
+                            Some(PropValue::Str(s)) => s.clone(),
+                            _ => String::new(),
+                        };
+                        host.on_trace(&format!(
+                            "vm: global.system.messagebox method={} text='{}'",
+                            method, text
+                        ));
                         if ret_form == crate::elm::form::INT {
-                            self.stack.push_int(0);
+                            // C++ default dialog OK path maps to non-zero success.
+                            self.stack.push_int(1);
                         }
                         return Ok(Some(true));
                     }
@@ -305,17 +317,58 @@ impl Vm {
                         }
                         return Ok(Some(true));
                     }
-                    m if crate::elm::system::is_get_calendar(m)
-                        || crate::elm::system::is_shell_open(m)
-                        || crate::elm::system::is_debug_write_log(m)
-                        || crate::elm::system::is_dummy_file_command(m) =>
-                    {
+                    m if crate::elm::system::is_get_calendar(m) => {
+                        host.on_trace(&format!(
+                            "vm: global.system.get_calendar method={} args_len={}",
+                            method,
+                            args.len()
+                        ));
                         if ret_form == crate::elm::form::INT {
-                            self.stack.push_int(0);
+                            self.stack.push_int(1);
+                        }
+                        return Ok(Some(true));
+                    }
+                    m if crate::elm::system::is_shell_open(m) => {
+                        let target = match args.first().map(|p| &p.value) {
+                            Some(PropValue::Str(s)) => s.clone(),
+                            _ => String::new(),
+                        };
+                        host.on_trace(&format!(
+                            "vm: global.system.shell_open method={} target='{}'",
+                            method, target
+                        ));
+                        if ret_form == crate::elm::form::INT {
+                            self.stack.push_int(if target.is_empty() { 0 } else { 1 });
+                        }
+                        return Ok(Some(true));
+                    }
+                    m if crate::elm::system::is_debug_write_log(m) => {
+                        let msg = match args.first().map(|p| &p.value) {
+                            Some(PropValue::Str(s)) => s.clone(),
+                            _ => String::new(),
+                        };
+                        host.on_trace(&format!("vm.debug_log: {}", msg));
+                        if ret_form == crate::elm::form::INT {
+                            self.stack.push_int(1);
+                        }
+                        return Ok(Some(true));
+                    }
+                    m if crate::elm::system::is_dummy_file_command(m) => {
+                        host.on_trace(&format!(
+                            "vm: global.system.file_dummy method={} args_len={}",
+                            method,
+                            args.len()
+                        ));
+                        if ret_form == crate::elm::form::INT {
+                            self.stack.push_int(1);
                         }
                         return Ok(Some(true));
                     }
                     m if crate::elm::system::is_any_system_element(m) => {
+                        host.on_trace(&format!(
+                            "vm: global.system fallback method={} ret_form={} (stubbed)",
+                            method, ret_form
+                        ));
                         if ret_form == crate::elm::form::INT {
                             self.stack.push_int(0);
                         } else if ret_form == crate::elm::form::STR {

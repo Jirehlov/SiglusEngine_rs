@@ -113,17 +113,17 @@ impl GuiHost {
                     x: state.x,
                     y: state.y,
                 });
-                let _ = self.event_tx.send(HostEvent::SetObjectVisible {
-                    stage: plane,
-                    index: object_index,
-                    visible: state.visible,
-                });
                 let _ = self.event_tx.send(HostEvent::SetObjectSort {
                     stage: plane,
                     index: object_index,
                     order: state.order,
                     layer: state.layer,
                     seq: state.seq,
+                });
+                let _ = self.event_tx.send(HostEvent::SetObjectVisible {
+                    stage: plane,
+                    index: object_index,
+                    visible: state.visible,
                 });
                 self.emit_object_render_state(plane, object_index);
             }

@@ -25,6 +25,8 @@ pub struct VmEndSaveRuntimeFrameState {
     pub return_scene: String,
     pub return_line_no: i32,
     pub expect_ret_form: i32,
+    pub call_type: i32,
+    pub excall_flag: bool,
     pub frame_action_flag: bool,
     pub arg_cnt: usize,
     pub call_l: Vec<i32>,
@@ -75,6 +77,7 @@ pub struct VmEndSaveRuntimeState {
     pub stack_strs: Vec<String>,
     pub stack_points: Vec<usize>,
     pub frames: Vec<VmEndSaveRuntimeFrameState>,
+    pub proc_stack: Vec<i32>,
     pub user_prop_forms: Vec<i32>,
     pub user_prop_values: Vec<VmEndSaveRuntimePropValue>,
     pub frame_action: VmEndSaveRuntimeFrameActionState,
@@ -103,13 +106,15 @@ impl VmEndSaveState {
     const MAGIC_V1: &'static [u8; 5] = b"SESV1";
     const MAGIC_V2: &'static [u8; 5] = b"SESV2";
     const MAGIC_V3: &'static [u8; 5] = b"SESV3";
+    const MAGIC_V4: &'static [u8; 5] = b"SESV4";
+    const MAGIC_V5: &'static [u8; 5] = b"SESV5";
     const MAX_VEC_LEN: usize = 1 << 20;
     const MAX_STR_BYTES: usize = 16 * 1024 * 1024;
     const MAX_TOTAL_STR_BYTES: usize = 128 * 1024 * 1024;
 
     pub fn encode_binary(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        out.extend_from_slice(Self::MAGIC_V3);
+        out.extend_from_slice(Self::MAGIC_V5);
 
         let title = self.scene_title.as_bytes();
         let title_len: u32 = title
@@ -287,6 +292,8 @@ impl VmEndSaveState {
             Self::push_string(buf, &frame.return_scene);
             buf.extend_from_slice(&frame.return_line_no.to_le_bytes());
             buf.extend_from_slice(&frame.expect_ret_form.to_le_bytes());
+            buf.extend_from_slice(&frame.call_type.to_le_bytes());
+            buf.push(if frame.excall_flag { 1 } else { 0 });
             buf.push(if frame.frame_action_flag { 1 } else { 0 });
             buf.extend_from_slice(&(frame.arg_cnt as u64).to_le_bytes());
             Self::push_i32_vec(buf, &frame.call_l);
@@ -302,6 +309,7 @@ impl VmEndSaveState {
             }
         }
 
+        Self::push_i32_vec(buf, &rt.proc_stack);
         Self::push_i32_vec(buf, &rt.user_prop_forms);
         let upn: u32 = rt
             .user_prop_values
@@ -544,7 +552,11 @@ impl VmEndSaveState {
             runtime: None,
         };
 
-        if &magic == Self::MAGIC_V2 || &magic == Self::MAGIC_V3 {
+        if &magic == Self::MAGIC_V2
+            || &magic == Self::MAGIC_V3
+            || &magic == Self::MAGIC_V4
+            || &magic == Self::MAGIC_V5
+        {
             let mut has_runtime = [0u8; 1];
             std::io::Read::read_exact(&mut cur, &mut has_runtime)?;
             if has_runtime[0] != 0 {
@@ -565,8 +577,19 @@ impl VmEndSaveState {
                     let return_scene = read_string(&mut cur, "runtime return scene")?;
                     let return_line_no = read_i32(&mut cur)?;
                     let expect_ret_form = read_i32(&mut cur)?;
-                    let mut flag = [0u8; 1];
-                    std::io::Read::read_exact(&mut cur, &mut flag)?;
+                    let (call_type, excall_flag, frame_action_flag) =
+                        if &magic == Self::MAGIC_V4 || &magic == Self::MAGIC_V5 {
+                            let call_type = read_i32(&mut cur)?;
+                            let mut excall = [0u8; 1];
+                            std::io::Read::read_exact(&mut cur, &mut excall)?;
+                            let mut frame = [0u8; 1];
+                            std::io::Read::read_exact(&mut cur, &mut frame)?;
+                            (call_type, excall[0] != 0, frame[0] != 0)
+                        } else {
+                            let mut frame = [0u8; 1];
+                            std::io::Read::read_exact(&mut cur, &mut frame)?;
+                            (0, false, frame[0] != 0)
+                        };
                     let arg_cnt = read_u64(&mut cur)? as usize;
                     let call_l = read_i32_vec(&mut cur, "runtime call_l")?;
                     let call_k = read_str_vec(&mut cur, "runtime call_k")?;
@@ -583,13 +606,20 @@ impl VmEndSaveState {
                         return_scene,
                         return_line_no,
                         expect_ret_form,
-                        frame_action_flag: flag[0] != 0,
+                        call_type,
+                        excall_flag,
+                        frame_action_flag,
                         arg_cnt,
                         call_l,
                         call_k,
                         call_user_props,
                     });
                 }
+                let proc_stack = if &magic == Self::MAGIC_V5 {
+                    read_i32_vec(&mut cur, "runtime proc_stack")?
+                } else {
+                    Vec::new()
+                };
                 let user_prop_forms = read_i32_vec(&mut cur, "runtime user_prop_forms")?;
                 let upn = read_u32(&mut cur)? as usize;
                 if upn > Self::MAX_VEC_LEN {
@@ -620,16 +650,19 @@ impl VmEndSaveState {
                 let msg_back_off_flag = read_i32(&mut cur)?;
                 let msg_back_disp_off_flag = read_i32(&mut cur)?;
                 let msg_back_proc_off_flag = read_i32(&mut cur)?;
-                let (system_wipe_flag, do_frame_action_flag, do_load_after_call_flag) =
-                    if &magic == Self::MAGIC_V3 {
-                        (
-                            read_i32(&mut cur)?,
-                            read_i32(&mut cur)?,
-                            read_i32(&mut cur)?,
-                        )
-                    } else {
-                        (0, 0, 0)
-                    };
+                let (system_wipe_flag, do_frame_action_flag, do_load_after_call_flag) = if &magic
+                    == Self::MAGIC_V3
+                    || &magic == Self::MAGIC_V4
+                    || &magic == Self::MAGIC_V5
+                {
+                    (
+                        read_i32(&mut cur)?,
+                        read_i32(&mut cur)?,
+                        read_i32(&mut cur)?,
+                    )
+                } else {
+                    (0, 0, 0)
+                };
                 let last_pc = read_u64(&mut cur)? as usize;
                 let last_line_no = read_i32(&mut cur)?;
                 let last_scene = read_string(&mut cur, "runtime last scene")?;
@@ -642,6 +675,7 @@ impl VmEndSaveState {
                     stack_strs,
                     stack_points,
                     frames,
+                    proc_stack,
                     user_prop_forms,
                     user_prop_values,
                     frame_action,

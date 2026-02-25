@@ -19,6 +19,29 @@ pub struct Prop {
     pub value: PropValue,
 }
 
+/// Unified observable state for `*_eve.wait` / `*_eve.wait_key` in property lane.
+///
+/// - `EVE_WAIT_DONE`: event already finished in this poll cycle.
+/// - `EVE_WAIT_PENDING`: event still waiting after one wait-frame tick.
+/// - `EVE_WAIT_KEY_SKIPPED`: `wait_key` was skipped by key input policy.
+pub const EVE_WAIT_DONE: i32 = 0;
+pub const EVE_WAIT_PENDING: i32 = 1;
+pub const EVE_WAIT_KEY_SKIPPED: i32 = 2;
+
+/// Syscom wait-observation owner-id mapping (flow_proc.cpp/ifc_proc_stack alignment).
+///
+/// Hosts can use this table to classify VM wait-status signals coming from syscom flow.
+pub const SYSCOM_WAIT_OWNER_PROC_BASE: i32 = -10_000;
+pub const SYSCOM_WAIT_OWNER_PROC_RETURN_TO_MENU: i32 = -10_011;
+pub const SYSCOM_WAIT_OWNER_PROC_RETURN_TO_SEL: i32 = -10_012;
+pub const SYSCOM_WAIT_OWNER_PROC_END_GAME: i32 = -10_013;
+pub const SYSCOM_WAIT_OWNER_END_LOAD_PRE_QUEUE: i32 = -10_201;
+pub const SYSCOM_WAIT_OWNER_END_LOAD_POST_QUEUE: i32 = -10_202;
+
+include!("api_syscom_wait.rs");
+
+include!("api_excall_counter_trace.rs");
+
 /// Flatten command arguments into selectable string options.
 ///
 /// Siglus selection commands may provide options either as direct string props
@@ -39,6 +62,39 @@ pub fn extract_selection_options(args: &[Prop]) -> Vec<String> {
         }
     }
     options
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmResourceKind {
+    Generic,
+    Image,
+    Movie,
+    Text,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VmCaptureFlagsSpec {
+    pub element: Vec<i32>,
+    pub index: i32,
+    pub count: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VmCaptureFlagPayload {
+    pub int_values: Vec<i32>,
+    pub str_values: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VmCaptureFileOp {
+    pub file_name: String,
+    pub extension: String,
+    pub dialog_flag: bool,
+    pub dialog_title: String,
+    pub int_flags: VmCaptureFlagsSpec,
+    pub str_flags: VmCaptureFlagsSpec,
+    pub int_values: Vec<i32>,
+    pub str_values: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -143,8 +199,39 @@ pub trait Host {
 
     fn on_error(&mut self, _msg: &str) {}
 
+    /// C++ tnm_set_error(TNM_ERROR_TYPE_FATAL, ...).
+    fn on_error_fatal(&mut self, msg: &str) {
+        self.on_error(msg);
+    }
+
+    /// C++ tnm_set_error(TNM_ERROR_TYPE_FILE_NOT_FOUND, ...).
+    fn on_error_file_not_found(&mut self, msg: &str) {
+        self.on_error(msg);
+    }
+
+    /// Best-effort resource existence probe using host-specific search paths.
+    fn on_resource_exists(&mut self, path: &str) -> bool {
+        self.on_resource_exists_with_kind(path, VmResourceKind::Generic)
+    }
+
+    /// Resource existence probe with command-level type hint.
+    ///
+    /// C++ cmd routing often probes file names with family-specific fallback rules
+    /// (e.g. image/movie extension candidates). Hosts may use `kind` to align those
+    /// resolution paths without changing VM-side command semantics.
+    fn on_resource_exists_with_kind(&mut self, path: &str, _kind: VmResourceKind) -> bool {
+        std::path::Path::new(path).exists()
+    }
+
+    /// Optional host-side text loading via resource resolver.
+    /// Returning `Some` means VM should consume this value directly; `None` falls
+    /// back to local filesystem best-effort loading for headless/default hosts.
+    fn on_resource_read_text(&mut self, _path: &str) -> Option<String> {
+        None
+    }
+
     /// Called when VM location/title context changes (for window caption, overlays, etc.).
-    fn on_location(&mut self, _scene_title: &str, _scene: &str, _line_no: i32) {}
+    fn on_location(&mut self, _scene_title: &str, _scene: &str, _line_no: i32, _pc: usize) {}
 
     /// Notify host that msg_back open-state changed.
     fn on_msg_back_state(&mut self, _open: bool) {}
@@ -307,6 +394,13 @@ pub trait Host {
     fn on_wait_frame(&mut self) {
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
+    /// C++ elm_counter.cpp::update_time inputs used by frame-mode counters.
+    ///
+    /// Returns `(past_game_time, past_real_time)` deltas for one wait/update turn.
+    /// Default keeps legacy VM behavior with unit-step increments.
+    fn on_frame_counter_elapsed(&mut self) -> (i32, i32) {
+        (1, 1)
+    }
 
     /// C++ reference: cmd_input.cpp::ELM_INPUT_CLEAR (input root clear all queues).
     fn on_input_clear(&mut self) {}
@@ -389,9 +483,7 @@ pub trait Host {
         false
     }
 
-    // ---------------------------------------------------------------
     // Screen / Effect / Quake Host callbacks (cmd_effect.cpp alignment)
-    // ---------------------------------------------------------------
 
     /// C++ cmd_effect.cpp: screen-level property set (x/y/z/mono/etc on effect_list[0]).
     fn on_screen_property(&mut self, _property_id: i32, _value: i32) {}
@@ -413,9 +505,7 @@ pub trait Host {
         false
     }
 
-    // ---------------------------------------------------------------
     // World Host callbacks (cmd_world.cpp alignment)
-    // ---------------------------------------------------------------
 
     /// C++ cmd_world.cpp: world property set.
     fn on_world_property(&mut self, _property_id: i32, _value: i32) {}
@@ -435,9 +525,7 @@ pub trait Host {
     /// C++ cmd_world.cpp: calc_camera_eye / calc_camera_pint.
     fn on_world_calc_camera(&mut self, _sub: i32, _distance: i32, _rotate_h: i32, _rotate_v: i32) {}
 
-    // ---------------------------------------------------------------
     // PCMCH Host callbacks (cmd_sound.cpp alignment)
-    // ---------------------------------------------------------------
 
     /// C++ cmd_sound.cpp: PCMCH play with full named-arg parameters.
     fn on_pcmch_play(
@@ -465,9 +553,7 @@ pub trait Host {
     /// C++ cmd_sound.cpp: PCMCH set_volume.
     fn on_pcmch_set_volume(&mut self, _ch: i32, _sub: i32, _vol: i32) {}
 
-    // ---------------------------------------------------------------
     // Stage / Group Host callbacks (cmd_stage.cpp alignment)
-    // ---------------------------------------------------------------
 
     /// C++ cmd_stage.cpp: stage_list->get_sub(index, disp_out_of_range_error).
     ///
@@ -494,6 +580,15 @@ pub trait Host {
 
     /// C++ cmd_stage.cpp: group start / start_cancel.
     fn on_group_start(&mut self, _stage_idx: i32, _group_idx: i32, _sub: i32) {}
+
+    /// C++ cmd_stage.cpp: group on_hit_no.
+    fn on_group_on_hit_no(&mut self, _stage_idx: i32, _group_idx: i32, _button_no: i32) {}
+
+    /// C++ cmd_stage.cpp: group on_pushed_no.
+    fn on_group_on_pushed_no(&mut self, _stage_idx: i32, _group_idx: i32, _button_no: i32) {}
+
+    /// C++ cmd_stage.cpp: group on_decided_no.
+    fn on_group_on_decided_no(&mut self, _stage_idx: i32, _group_idx: i32, _button_no: i32) {}
 
     /// C++ cmd_stage.cpp: group end.
     fn on_group_end(&mut self, _stage_idx: i32, _group_idx: i32) {}
@@ -559,133 +654,33 @@ pub trait Host {
         None
     }
 
-    // ---------------------------------------------------------------
-    // int_event Host callbacks (cmd_others.cpp alignment)
-    // ---------------------------------------------------------------
+    /// C++ cmd_syscom.cpp: create_capture_buffer.
+    fn on_syscom_create_capture_buffer(&mut self, _width: i32, _height: i32) {}
 
-    /// C++ cmd_others.cpp: int_event SET/SET_REAL.
-    fn on_int_event_set(
-        &mut self,
-        _owner_id: i32,
-        _start: i32,
-        _end: i32,
-        _time: i32,
-        _delay: i32,
-        _realtime: i32,
-        _value_override: Option<i32>,
-    ) {
-    }
+    /// C++ cmd_syscom.cpp: destroy_capture_buffer.
+    fn on_syscom_destroy_capture_buffer(&mut self) {}
 
-    /// C++ cmd_others.cpp: int_event LOOP/LOOP_REAL.
-    fn on_int_event_loop(
-        &mut self,
-        _owner_id: i32,
-        _start: i32,
-        _end: i32,
-        _time: i32,
-        _delay: i32,
-        _count: i32,
-        _realtime: i32,
-    ) {
-    }
+    /// C++ cmd_syscom.cpp: capture_to_capture_buffer / capture_and_save_buffer_to_png.
+    fn on_syscom_capture_to_buffer(&mut self, _x: i32, _y: i32, _save_png_path: &str) {}
 
-    /// C++ cmd_others.cpp: int_event TURN/TURN_REAL.
-    fn on_int_event_turn(
-        &mut self,
-        _owner_id: i32,
-        _start: i32,
-        _end: i32,
-        _time: i32,
-        _delay: i32,
-        _count: i32,
-        _realtime: i32,
-    ) {
-    }
-
-    /// C++ cmd_others.cpp: int_event END.
-    fn on_int_event_end(&mut self, _owner_id: i32) {}
-
-    /// C++ cmd_others.cpp: int_event WAIT/WAIT_KEY.
-    fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
-
-    /// C++ cmd_others.cpp: int_event CHECK.
-    fn on_int_event_check(&mut self, _owner_id: i32) -> bool {
+    /// C++ cmd_syscom.cpp: save_capture_buffer_to_file.
+    fn on_syscom_save_capture_buffer_to_file(&mut self, _req: &VmCaptureFileOp) -> bool {
         false
     }
 
-    /// C++ cmd_others.cpp: int_event GET_EVENT_VALUE.
-    fn on_int_event_get_value(&mut self, _owner_id: i32) -> i32 {
-        0
-    }
-
-    // ---------------------------------------------------------------
-    // Object Host callbacks (cmd_object.cpp alignment)
-    // ---------------------------------------------------------------
-
-    /// C++ cmd_object.cpp: object property set (int value).
-    fn on_object_property(
+    /// C++ cmd_syscom.cpp: load_flag_from_capture_file.
+    fn on_syscom_load_flag_from_capture_file(
         &mut self,
-        _list_id: i32,
-        _obj_index: i32,
-        _property_id: i32,
-        _value: i32,
-        _stage_idx: Option<i32>,
-    ) {
-    }
-    /// C++ cmd_object.cpp: object_list->get_sub(index, disp_out_of_range_error).
-    ///
-    /// Return negative when the host cannot provide a concrete size yet.
-    fn on_object_list_get_size(&mut self, _list_id: i32, _stage_idx: Option<i32>) -> i32 {
-        -1
+        _req: &VmCaptureFileOp,
+    ) -> Option<VmCaptureFlagPayload> {
+        None
     }
 
-    /// C++ cmd_object.cpp: `if (!p_obj->is_use()) {}` early-return branch.
-    fn on_object_is_use(
-        &mut self,
-        _list_id: i32,
-        _obj_index: i32,
-        _stage_idx: Option<i32>,
-    ) -> bool {
-        true
-    }
+    include!("api_int_event_hooks.rs");
 
-    /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
-    fn on_object_action(
-        &mut self,
-        _list_id: i32,
-        _obj_index: i32,
-        _sub_id: i32,
-        _args: &[Prop],
-        _stage_idx: Option<i32>,
-    ) {
-    }
+    include!("api_object_hooks.rs");
 
-    /// C++ cmd_object.cpp: object property get.
-    fn on_object_get(
-        &mut self,
-        _list_id: i32,
-        _obj_index: i32,
-        _sub_id: i32,
-        _stage_idx: Option<i32>,
-    ) -> i32 {
-        0
-    }
-
-    /// C++ cmd_object.cpp: int-returning action lane with argument payload (e.g. `__iapp_dummy`).
-    fn on_object_query(
-        &mut self,
-        _list_id: i32,
-        _obj_index: i32,
-        _sub_id: i32,
-        _args: &[Prop],
-        _stage_idx: Option<i32>,
-    ) -> i32 {
-        0
-    }
-
-    // ---------------------------------------------------------------
     // Mwnd Host callbacks (cmd_mwnd.cpp alignment)
-    // ---------------------------------------------------------------
 
     /// C++ cmd_mwnd.cpp: mwnd action command (sub_id identifies the command).
     fn on_mwnd_action(&mut self, _sub_id: i32, _args: &[Prop]) {}
@@ -695,9 +690,7 @@ pub trait Host {
         0
     }
 
-    // ---------------------------------------------------------------
     // Counter / Database / Others Host callbacks
-    // ---------------------------------------------------------------
 
     /// C++ cmd_others.cpp: counter action (set/reset/start/stop/resume/wait).
     fn on_counter_action(&mut self, _action: i32, _args: &[Prop]) {}

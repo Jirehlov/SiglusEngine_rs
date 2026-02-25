@@ -101,7 +101,9 @@ impl Vm {
         if se_play {
             host.on_syscom_play_se(crate::elm::syscom::SE_KIND_LOAD);
         }
+        self.notify_syscom_proc_wait_observation(host, Self::SYSCOM_WAIT_OWNER_END_LOAD_PRE_QUEUE);
         self.run_syscom_proc_queue(&proc_queue, provider, host)?;
+        self.notify_syscom_proc_wait_observation(host, Self::SYSCOM_WAIT_OWNER_END_LOAD_POST_QUEUE);
         if ret_form == crate::elm::form::INT {
             // C++ reference: eng_syscom.cpp::tnm_syscom_end_load returns true once accepted;
             // later tnm_end_load_proc internal load failures do not retroactively change cmd return.

@@ -11,7 +11,77 @@
 /// Event properties (*_EVE) delegate to command_int_event sub-router.
 use super::*;
 
+include!("command_object_frame_action_helpers.rs");
+include!("command_object_frame_action_route.rs");
+include!("command_object_frame_action_counter_gc.rs");
+include!("command_object_child_route.rs");
+include!("command_object_gan_track.rs");
+
 impl Vm {
+    fn object_arg_str(args: &[Prop], idx: usize) -> String {
+        match args.get(idx).map(|p| &p.value) {
+            Some(PropValue::Str(v)) => v.clone(),
+            Some(PropValue::Int(v)) => v.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    fn object_command_replaces_resource(sub: i32) -> bool {
+        use crate::elm::objectlist::*;
+        matches!(
+            sub,
+            ELM_OBJECT_INIT
+                | ELM_OBJECT_FREE
+                | ELM_OBJECT_INIT_PARAM
+                | ELM_OBJECT_CREATE
+                | ELM_OBJECT_CREATE_RECT
+                | ELM_OBJECT_CREATE_STRING
+                | ELM_OBJECT_CREATE_NUMBER
+                | ELM_OBJECT_CREATE_WEATHER
+                | ELM_OBJECT_CREATE_MESH
+                | ELM_OBJECT_CREATE_BILLBOARD
+                | ELM_OBJECT_CREATE_SAVE_THUMB
+                | ELM_OBJECT_CREATE_CAPTURE_THUMB
+                | ELM_OBJECT_CREATE_CAPTURE
+                | ELM_OBJECT_CREATE_COPY_FROM
+                | ELM_OBJECT_CREATE_EMOTE
+                | ELM_OBJECT_CREATE_FROM_CAPTURE_FILE
+                | ELM_OBJECT_CREATE_MOVIE
+                | ELM_OBJECT_CREATE_MOVIE_LOOP
+                | ELM_OBJECT_CREATE_MOVIE_WAIT
+                | ELM_OBJECT_CREATE_MOVIE_WAIT_KEY
+                | ELM_OBJECT_CHANGE_FILE
+                | ELM_OBJECT_SET_STRING
+                | ELM_OBJECT_SET_STRING_PARAM
+                | ELM_OBJECT_SET_NUMBER
+                | ELM_OBJECT_SET_NUMBER_PARAM
+        )
+    }
+
+    fn object_resource_kind(sub: i32) -> VmResourceKind {
+        use crate::elm::objectlist::*;
+        match sub {
+            ELM_OBJECT_CREATE_MOVIE
+            | ELM_OBJECT_CREATE_MOVIE_LOOP
+            | ELM_OBJECT_CREATE_MOVIE_WAIT
+            | ELM_OBJECT_CREATE_MOVIE_WAIT_KEY => VmResourceKind::Movie,
+            _ => VmResourceKind::Image,
+        }
+    }
+
+    fn object_report_file_not_found(host: &mut dyn Host, sub: i32, args: &[Prop]) {
+        let path = Self::object_arg_str(args, 0);
+        if path.is_empty() {
+            return;
+        }
+        if !host.on_resource_exists_with_kind(&path, Self::object_resource_kind(sub)) {
+            host.on_error_file_not_found(&format!(
+                "ファイル \"{}\" が見つかりません。(object:{})",
+                path, sub
+            ));
+        }
+    }
+
     // ---------------------------------------------------------------
     // Object list: stage.object / mwnd.object / etc.
     // ---------------------------------------------------------------
@@ -38,7 +108,9 @@ impl Vm {
                 let object_size = host.on_object_list_get_size(list_id, stage_idx);
                 if object_size >= 0 && (obj_idx < 0 || obj_idx >= object_size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のオブジェクト番号が指定されました。(object_list)");
+                        host.on_error_fatal(
+                            "範囲外のオブジェクト番号が指定されました。(object_list)",
+                        );
                     }
                     if ret_form == crate::elm::form::INT {
                         self.stack.push_int(0);
@@ -86,7 +158,7 @@ impl Vm {
                 true
             }
             _ => {
-                host.on_error("無効なコマンドが指定されました。(object_list)");
+                host.on_error_fatal("無効なコマンドが指定されました。(object_list)");
                 true
             }
         }
@@ -313,7 +385,7 @@ impl Vm {
                             self.stack.push_int(0);
                         }
                         _ => {
-                            host.on_error("無効なコマンドが指定されました。(allevent)");
+                            host.on_error_fatal("無効なコマンドが指定されました。(allevent)");
                         }
                     }
                 }
@@ -344,8 +416,8 @@ impl Vm {
                 true
             }
             ELM_OBJECT_GET_FILE_NAME => {
-                // C++ tnm_stack_push_str(p_obj->get_file_path())
-                self.stack.push_str(String::new());
+                self.stack
+                    .push_str(host.on_object_get_str(list_id, obj_idx, sub, stage_idx));
                 true
             }
             ELM_OBJECT_EXIST_TYPE => {
@@ -355,7 +427,8 @@ impl Vm {
                 true
             }
             ELM_OBJECT_GET_ELEMENT_NAME => {
-                self.stack.push_str(String::new());
+                self.stack
+                    .push_str(host.on_object_get_str(list_id, obj_idx, sub, stage_idx));
                 true
             }
             ELM_OBJECT_GET_TYPE => {
@@ -368,6 +441,10 @@ impl Vm {
             // Lifecycle commands
             // =============================================================
             ELM_OBJECT_INIT | ELM_OBJECT_FREE | ELM_OBJECT_INIT_PARAM => {
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -384,6 +461,11 @@ impl Vm {
             | ELM_OBJECT_CREATE_COPY_FROM
             | ELM_OBJECT_CREATE_EMOTE
             | ELM_OBJECT_CREATE_FROM_CAPTURE_FILE => {
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
+                Self::object_report_file_not_found(host, sub, args);
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -391,10 +473,20 @@ impl Vm {
             | ELM_OBJECT_CREATE_MOVIE_LOOP
             | ELM_OBJECT_CREATE_MOVIE_WAIT
             | ELM_OBJECT_CREATE_MOVIE_WAIT_KEY => {
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
+                Self::object_report_file_not_found(host, sub, args);
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
             ELM_OBJECT_CHANGE_FILE => {
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
+                Self::object_report_file_not_found(host, sub, args);
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -406,11 +498,16 @@ impl Vm {
             | ELM_OBJECT_SET_STRING_PARAM
             | ELM_OBJECT_SET_NUMBER
             | ELM_OBJECT_SET_NUMBER_PARAM => {
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
             ELM_OBJECT_GET_STRING => {
-                self.stack.push_str(String::new());
+                self.stack
+                    .push_str(host.on_object_get_str(list_id, obj_idx, sub, stage_idx));
                 true
             }
             ELM_OBJECT_GET_NUMBER => {
@@ -486,10 +583,10 @@ impl Vm {
             // from within FRAME_ACTION, not from the main object switch.
             // Frame action commands
             // =============================================================
-            ELM_OBJECT_FRAME_ACTION | ELM_OBJECT_FRAME_ACTION_CH => {
-                host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
-                true
-            }
+            ELM_OBJECT_FRAME_ACTION | ELM_OBJECT_FRAME_ACTION_CH => self
+                .try_command_object_frame_action(
+                    list_id, obj_idx, sub, element, args, ret_form, stage_idx, host,
+                ),
 
             // =============================================================
             // Emote commands
@@ -536,9 +633,10 @@ impl Vm {
             // =============================================================
             // Child object list
             // =============================================================
-            ELM_OBJECT_CHILD => self.try_command_object_list(
+            ELM_OBJECT_CHILD => self.try_command_object_child(
                 list_id,
                 stage_idx,
+                obj_idx,
                 &element[1..],
                 arg_list_id,
                 args,
@@ -570,7 +668,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(object)");
+                host.on_error_fatal("無効なコマンドが指定されました。(object)");
                 true
             }
         }

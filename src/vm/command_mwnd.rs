@@ -12,6 +12,27 @@
 use super::*;
 
 impl Vm {
+    fn mwnd_arg_str(args: &[Prop], idx: usize) -> String {
+        match args.get(idx).map(|p| &p.value) {
+            Some(PropValue::Str(v)) => v.clone(),
+            Some(PropValue::Int(v)) => v.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    fn mwnd_report_file_not_found(host: &mut dyn Host, sub: i32, args: &[Prop]) {
+        let path = Self::mwnd_arg_str(args, 0);
+        if path.is_empty() {
+            return;
+        }
+        if !host.on_resource_exists_with_kind(&path, VmResourceKind::Image) {
+            host.on_error_file_not_found(&format!(
+                "ファイル \"{}\" が見つかりません。(mwnd:{})",
+                path, sub
+            ));
+        }
+    }
+
     // ---------------------------------------------------------------
     // Mwnd list: stage.mwnd
     // ---------------------------------------------------------------
@@ -38,7 +59,7 @@ impl Vm {
                 let mwnd_size = host.on_mwnd_list_get_size();
                 if mwnd_size >= 0 && (mwnd_idx < 0 || mwnd_idx >= mwnd_size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のウィンドウ番号が指定されました。(mwnd_list)");
+                        host.on_error_fatal("範囲外のウィンドウ番号が指定されました。(mwnd_list)");
                     }
                     if ret_form == crate::elm::form::INT {
                         self.stack.push_int(0);
@@ -69,7 +90,7 @@ impl Vm {
                 true
             }
             _ => {
-                host.on_error("無効なコマンドが指定されました。(mwnd_list)");
+                host.on_error_fatal("無効なコマンドが指定されました。(mwnd_list)");
                 true
             }
         }
@@ -98,6 +119,9 @@ impl Vm {
         match sub {
             // --- Waku (frame) commands ---
             ELM_MWND_SET_WAKU | ELM_MWND_INIT_WAKU_FILE | ELM_MWND_SET_WAKU_FILE => {
+                if matches!(sub, ELM_MWND_INIT_WAKU_FILE | ELM_MWND_SET_WAKU_FILE) {
+                    Self::mwnd_report_file_not_found(host, sub, args);
+                }
                 host.on_mwnd_action(sub, args);
                 true
             }
@@ -108,6 +132,7 @@ impl Vm {
 
             // --- Filter commands ---
             ELM_MWND_INIT_FILTER_FILE | ELM_MWND_SET_FILTER_FILE => {
+                Self::mwnd_report_file_not_found(host, sub, args);
                 host.on_mwnd_action(sub, args);
                 true
             }
@@ -210,6 +235,9 @@ impl Vm {
 
             // --- Face ---
             ELM_MWND_CLEAR_FACE | ELM_MWND_SET_FACE => {
+                if sub == ELM_MWND_SET_FACE {
+                    Self::mwnd_report_file_not_found(host, sub, args);
+                }
                 host.on_mwnd_action(sub, args);
                 true
             }
@@ -280,7 +308,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(mwnd)");
+                host.on_error_fatal("無効なコマンドが指定されました。(mwnd)");
                 true
             }
         }

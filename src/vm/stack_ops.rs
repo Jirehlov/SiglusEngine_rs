@@ -2,8 +2,46 @@ use super::opcode::op;
 use super::*;
 
 impl Vm {
+    pub(super) fn vm_error_context_tag(&self) -> String {
+        format!(
+            "scene={} line={} pc={}",
+            self.scene, self.last_line_no, self.last_pc
+        )
+    }
+
+    pub(super) fn report_vm_fatal_with_context(&self, host: &mut dyn Host, message: &str) {
+        host.on_error_fatal(&format!("{} [{}]", message, self.vm_error_context_tag()));
+    }
+
+    pub(super) fn vm_read_i32(&mut self, host: &mut dyn Host, op: &str, what: &str) -> Result<i32> {
+        self.lexer.pop_i32().map_err(|e| {
+            self.report_vm_fatal_with_context(host, &format!("{}: invalid {}: {}", op, what, e));
+            e
+        })
+    }
+
+    pub(super) fn vm_read_u8(&mut self, host: &mut dyn Host, op: &str, what: &str) -> Result<u8> {
+        self.lexer.pop_u8().map_err(|e| {
+            self.report_vm_fatal_with_context(host, &format!("{}: invalid {}: {}", op, what, e));
+            e
+        })
+    }
+
+    pub(super) fn vm_read_str(
+        &mut self,
+        host: &mut dyn Host,
+        op: &str,
+        what: &str,
+    ) -> Result<String> {
+        self.lexer.pop_str_ret().map_err(|e| {
+            self.report_vm_fatal_with_context(host, &format!("{}: invalid {}: {}", op, what, e));
+            e
+        })
+    }
+
     const SCRIPT_ARG_CNT_MAX: usize = 1024;
     const SCRIPT_EXP_ARG_CNT_MAX: usize = 64;
+    const SCRIPT_EXP_NEST_MAX: usize = 8;
 
     pub(super) fn push_host_ret(&mut self, ret: &HostReturn, ret_form: i32) {
         if ret_form == crate::elm::form::INT {
@@ -40,18 +78,53 @@ impl Vm {
         }
     }
 
-    fn pop_arg_list_with_cap(&mut self, cap: usize) -> Result<Vec<Prop>> {
-        let arg_cnt = self.lexer.pop_i32()?;
-        if arg_cnt <= 0 {
+    fn pop_arg_list_with_cap(
+        &mut self,
+        host: &mut dyn Host,
+        cap: usize,
+        depth: usize,
+    ) -> Result<Vec<Prop>> {
+        if depth > Self::SCRIPT_EXP_NEST_MAX {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!(
+                    "CD_COMMAND: nested arg list depth {} exceeds max {}",
+                    depth,
+                    Self::SCRIPT_EXP_NEST_MAX
+                ),
+            );
+            bail!(
+                "CD_COMMAND: nested arg list depth {} exceeds max {}",
+                depth,
+                Self::SCRIPT_EXP_NEST_MAX
+            );
+        }
+
+        let arg_cnt = self.vm_read_i32(host, "CD_COMMAND", "arg_cnt")?;
+        if arg_cnt < 0 {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!("CD_COMMAND: negative arg_cnt {}", arg_cnt),
+            );
+            bail!("CD_COMMAND: negative arg_cnt {}", arg_cnt);
+        }
+        if arg_cnt == 0 {
             return Ok(Vec::new());
         }
 
         let n = arg_cnt as usize;
-        let keep = n.min(cap);
-        let mut out: Vec<Option<Prop>> = vec![None; keep];
+        if n > cap {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!("CD_COMMAND: arg_cnt {} exceeds max {}", n, cap),
+            );
+            bail!("CD_COMMAND: arg_cnt {} exceeds max {}", n, cap);
+        }
+
+        let mut out: Vec<Option<Prop>> = vec![None; n];
 
         for i in (0..n).rev() {
-            let form_code = self.lexer.pop_i32()?;
+            let form_code = self.vm_read_i32(host, "CD_COMMAND", "arg form")?;
             let prop = if form_code == crate::elm::form::INT {
                 Prop {
                     id: -1,
@@ -65,14 +138,14 @@ impl Vm {
                     value: PropValue::Str(self.stack.pop_str()?),
                 }
             } else if form_code == crate::elm::form::LABEL {
-                // stored as int
                 Prop {
                     id: -1,
                     form: crate::elm::form::INT,
                     value: PropValue::Int(self.stack.pop_int()?),
                 }
             } else if form_code == crate::elm::form::LIST {
-                let sub = self.pop_arg_list_with_cap(Self::SCRIPT_EXP_ARG_CNT_MAX)?;
+                let sub =
+                    self.pop_arg_list_with_cap(host, Self::SCRIPT_EXP_ARG_CNT_MAX, depth + 1)?;
                 Prop {
                     id: -1,
                     form: crate::elm::form::LIST,
@@ -85,22 +158,39 @@ impl Vm {
                     value: PropValue::Element(self.stack.pop_element()?),
                 }
             };
-
-            if i < keep {
-                out[i] = Some(prop);
-            }
+            out[i] = Some(prop);
         }
 
         Ok(out.into_iter().flatten().collect())
     }
 
-    pub(super) fn pop_arg_list(&mut self) -> Result<Vec<Prop>> {
-        self.pop_arg_list_with_cap(Self::SCRIPT_ARG_CNT_MAX)
+    pub(super) fn pop_arg_list(&mut self, host: &mut dyn Host) -> Result<Vec<Prop>> {
+        self.pop_arg_list_with_cap(host, Self::SCRIPT_ARG_CNT_MAX, 0)
     }
 
-    pub(super) fn proc_gosub(&mut self, ret_form: i32) -> Result<()> {
-        let label_no = self.lexer.pop_i32()?;
-        let _args = self.pop_arg_list()?;
+    pub(super) fn proc_jump_to_label(
+        &mut self,
+        label_no: i32,
+        from_opcode: &str,
+        host: &mut dyn Host,
+    ) -> Result<()> {
+        self.lexer.jump_to_label(label_no).map_err(|e| {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!("{}: invalid label {}: {}", from_opcode, label_no, e),
+            );
+            e
+        })
+    }
+
+    pub(super) fn proc_gosub(&mut self, ret_form: i32, host: &mut dyn Host) -> Result<()> {
+        let label_no = self.vm_read_i32(host, "CD_GOSUB", "label operand")?;
+        let args = self.pop_arg_list(host)?;
+
+        if self.frames.is_empty() {
+            self.report_vm_fatal_with_context(host, "CD_GOSUB: empty VM frame stack");
+            bail!("CD_GOSUB: empty VM frame stack");
+        }
 
         // store expected return type in caller
         if let Some(top) = self.frames.last_mut() {
@@ -117,6 +207,8 @@ impl Vm {
             return_dat,
             return_line_no,
             expect_ret_form: crate::elm::form::VOID,
+            call_type: VmCallType::Gosub,
+            excall_flag: false,
             frame_action_flag: false,
             arg_cnt: 0,
             call: CallContext::new(DEFAULT_CALL_FLAG_CNT),
@@ -127,7 +219,7 @@ impl Vm {
             let call = &mut self.frames.last_mut().unwrap().call;
             let mut li = 0usize;
             let mut ki = 0usize;
-            for a in &_args {
+            for a in &args {
                 match &a.value {
                     PropValue::Int(v) => {
                         if li < call.l.len() {
@@ -146,12 +238,23 @@ impl Vm {
             }
         }
 
-        self.lexer.jump_to_label(label_no)?;
+        self.lexer.jump_to_label(label_no).map_err(|e| {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!("CD_GOSUB: jump_to_label({}) failed: {}", label_no, e),
+            );
+            e
+        })?;
         Ok(())
     }
 
     pub(super) fn proc_return(&mut self, host: &mut dyn Host) -> Result<bool> {
-        let args = self.pop_arg_list()?;
+        let args = self.pop_arg_list(host)?;
+
+        if self.frames.is_empty() {
+            self.report_vm_fatal_with_context(host, "CD_RETURN: empty VM frame stack");
+            bail!("CD_RETURN: empty VM frame stack");
+        }
 
         if self.frames.len() <= 1 {
             // no caller -> end script
@@ -161,14 +264,33 @@ impl Vm {
         // pop callee
         let callee = self.frames.pop().unwrap();
         let frame_action_flag = callee.frame_action_flag;
+        let ex_call_flag = callee.excall_flag;
         self.scene = callee.return_scene;
         self.lexer.set_scene(callee.return_dat);
         self.reload_user_props_from_current_scene();
+        if callee.return_pc > self.lexer.dat.scn_bytes.len() {
+            self.report_vm_fatal_with_context(
+                host,
+                &format!(
+                    "CD_RETURN: return_pc out of range: {} > {}",
+                    callee.return_pc,
+                    self.lexer.dat.scn_bytes.len()
+                ),
+            );
+            bail!(
+                "CD_RETURN: return_pc out of range: {} > {}",
+                callee.return_pc,
+                self.lexer.dat.scn_bytes.len()
+            );
+        }
         self.lexer.pc = callee.return_pc;
         self.lexer.cur_line_no = callee.return_line_no;
 
         // now we're back in caller
         let ret_form = self.frames.last().unwrap().expect_ret_form;
+        if let Some(caller) = self.frames.last_mut() {
+            caller.expect_ret_form = crate::elm::form::VOID;
+        }
 
         if ret_form == crate::elm::form::INT {
             if args.len() == 1 {
@@ -192,9 +314,16 @@ impl Vm {
             }
         }
 
+        if ex_call_flag {
+            host.on_input_clear();
+        }
+        if ex_call_flag || frame_action_flag {
+            self.pop_script_proc();
+        }
+        self.reconcile_proc_stack();
+
         // If this was invoked as a frame action, stop after returning to the caller.
         // (Matches tnm_proc_script() behaviour when frame_action_flag is set.)
-        let _ = host;
         Ok(!frame_action_flag)
     }
 
@@ -246,7 +375,7 @@ impl Vm {
                     .push_int(((lhs as u32).wrapping_shr(rhs as u32)) as i32),
                 x if x == op::DIVIDE => {
                     if rhs == 0 {
-                        host.on_error("0 除算を行いました！'/'");
+                        self.report_vm_fatal_with_context(host, "0 除算を行いました！'/'");
                         self.stack.push_int(0);
                     } else {
                         self.stack.push_int(lhs / rhs);
@@ -254,7 +383,7 @@ impl Vm {
                 }
                 x if x == op::AMARI => {
                     if rhs == 0 {
-                        host.on_error("0 除算を行いました！'%'");
+                        self.report_vm_fatal_with_context(host, "0 除算を行いました！'%'");
                         self.stack.push_int(0);
                     } else {
                         self.stack.push_int(lhs % rhs);

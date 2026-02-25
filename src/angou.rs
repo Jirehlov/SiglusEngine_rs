@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use encoding_rs::SHIFT_JIS;
 
 use crate::angou_consts::{self, source_angou};

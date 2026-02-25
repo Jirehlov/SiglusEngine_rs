@@ -1,8 +1,16 @@
 use super::opcode::cd;
 use super::*;
 
-
 impl Vm {
+    pub(super) fn resolve_call_prop_slot(call: &CallContext, cp_code: usize) -> Option<usize> {
+        if cp_code < call.user_props.len() {
+            return Some(cp_code);
+        }
+        call.user_props
+            .iter()
+            .position(|cp| cp.prop_id >= 0 && cp.prop_id as usize == cp_code)
+    }
+
     pub(super) fn reload_user_props_from_current_scene(&mut self) {
         let (forms, values) = make_user_props(&self.lexer.dat);
         self.user_prop_forms = forms;
@@ -61,7 +69,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn proc_arg(&mut self) -> Result<()> {
+    pub(super) fn proc_arg(&mut self, host: &mut dyn Host) -> Result<()> {
         let (frame_action_flag, arg_cnt) = self
             .frames
             .last()
@@ -82,9 +90,20 @@ impl Vm {
                 || self.frames.last().unwrap().call.user_props[0].form
                     != crate::elm::form::FRAMEACTION
             {
+                self.report_vm_fatal_with_context(
+                    host,
+                    "vm: frame_action call requires first arg to be FM_FRAMEACTION",
+                );
                 bail!("vm: frame_action call requires first arg to be FM_FRAMEACTION");
             }
             if arg_cnt != len {
+                self.report_vm_fatal_with_context(
+                    host,
+                    &format!(
+                        "vm: frame_action call arg_cnt mismatch: got {}, expected {}",
+                        arg_cnt, len
+                    ),
+                );
                 bail!(
                     "vm: frame_action call arg_cnt mismatch: got {}, expected {}",
                     arg_cnt,
@@ -101,22 +120,149 @@ impl Vm {
             // For local list props (FM_INTLIST/FM_STRLIST) we keep our backing storage,
             // but still pop the element to keep the stack balanced.
             if form == crate::elm::form::INTLIST || form == crate::elm::form::STRLIST {
-                let _ = self.stack.pop_element()?;
+                let src_element_raw = self.stack.pop_element().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ARG: pop list source element failed: {}", e),
+                    );
+                    e
+                })?;
+                let src_element = self.resolve_command_element_alias(&src_element_raw);
+                if form == crate::elm::form::INTLIST {
+                    if let Some(v) = self.resolve_intlist_source(&src_element) {
+                        self.frames.last_mut().unwrap().call.user_props[i].value =
+                            PropValue::IntList(v);
+                    } else {
+                        self.report_vm_fatal_with_context(
+                            host,
+                            "CD_ARG: unresolved INTLIST source element",
+                        );
+                        bail!("CD_ARG: unresolved INTLIST source element");
+                    }
+                } else if let Some(v) = self.resolve_strlist_source(&src_element) {
+                    self.frames.last_mut().unwrap().call.user_props[i].value =
+                        PropValue::StrList(v);
+                } else {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        "CD_ARG: unresolved STRLIST source element",
+                    );
+                    bail!("CD_ARG: unresolved STRLIST source element");
+                }
                 continue;
             }
 
             let value = if form == crate::elm::form::INT {
-                PropValue::Int(self.stack.pop_int()?)
+                PropValue::Int(self.stack.pop_int().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ARG: pop int failed: {}", e),
+                    );
+                    e
+                })?)
             } else if form == crate::elm::form::STR {
-                PropValue::Str(self.stack.pop_str()?)
+                PropValue::Str(self.stack.pop_str().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ARG: pop str failed: {}", e),
+                    );
+                    e
+                })?)
             } else {
-                PropValue::Element(self.stack.pop_element()?)
+                PropValue::Element(self.stack.pop_element().map_err(|e| {
+                    self.report_vm_fatal_with_context(
+                        host,
+                        &format!("CD_ARG: pop element failed: {}", e),
+                    );
+                    e
+                })?)
             };
 
             self.frames.last_mut().unwrap().call.user_props[i].value = value;
         }
 
         Ok(())
+    }
+
+    fn get_intflag_ref(&self, head: i32) -> Option<&Vec<i32>> {
+        match crate::elm::global::intflag_slot(head) {
+            Some(0) => Some(&self.flags_a),
+            Some(1) => Some(&self.flags_b),
+            Some(2) => Some(&self.flags_c),
+            Some(3) => Some(&self.flags_d),
+            Some(4) => Some(&self.flags_e),
+            Some(5) => Some(&self.flags_f),
+            Some(6) => Some(&self.flags_x),
+            Some(7) => Some(&self.flags_g),
+            Some(8) => Some(&self.flags_z),
+            _ => None,
+        }
+    }
+
+    fn get_strflag_ref(&self, head: i32) -> Option<&Vec<String>> {
+        match crate::elm::global::strflag_slot(head) {
+            Some(0) => Some(&self.flags_s),
+            Some(1) => Some(&self.flags_m),
+            Some(2) => Some(&self.global_namae),
+            Some(3) => Some(&self.local_namae),
+            _ => None,
+        }
+    }
+
+    pub(super) fn resolve_intlist_source(&self, element: &[i32]) -> Option<Vec<i32>> {
+        if element.len() >= 2 && crate::elm::call::is_cur_call(element[0]) {
+            if crate::elm::call::is_call_l(element[1]) {
+                return self.frames.last().map(|f| f.call.l.clone());
+            }
+            if crate::elm::owner::is_call_prop(element[1]) {
+                let cp = elm_code(element[1]) as usize;
+                let call = &self.frames.last()?.call;
+                let slot = Self::resolve_call_prop_slot(call, cp)?;
+                if let PropValue::IntList(v) = &call.user_props[slot].value {
+                    return Some(v.clone());
+                }
+            }
+        }
+        if element.len() == 1 {
+            if let Some(v) = self.get_intflag_ref(element[0]) {
+                return Some(v.clone());
+            }
+            if crate::elm::owner::is_user_prop(element[0]) {
+                let up = elm_code(element[0]) as usize;
+                if let Some(PropValue::IntList(v)) = self.user_prop_values.get(up) {
+                    return Some(v.clone());
+                }
+            }
+        }
+        None
+    }
+
+    pub(super) fn resolve_strlist_source(&self, element: &[i32]) -> Option<Vec<String>> {
+        if element.len() >= 2 && crate::elm::call::is_cur_call(element[0]) {
+            if crate::elm::call::is_call_k(element[1]) {
+                return self.frames.last().map(|f| f.call.k.clone());
+            }
+            if crate::elm::owner::is_call_prop(element[1]) {
+                let cp = elm_code(element[1]) as usize;
+                let call = &self.frames.last()?.call;
+                let slot = Self::resolve_call_prop_slot(call, cp)?;
+                if let PropValue::StrList(v) = &call.user_props[slot].value {
+                    return Some(v.clone());
+                }
+            }
+        }
+        if element.len() == 1 {
+            if let Some(v) = self.get_strflag_ref(element[0]) {
+                return Some(v.clone());
+            }
+            if crate::elm::owner::is_user_prop(element[0]) {
+                let up = elm_code(element[0]) as usize;
+                if let Some(PropValue::StrList(v)) = self.user_prop_values.get(up) {
+                    return Some(v.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Return a mutable reference to the int-flag list for the given element head, or None.
@@ -146,6 +292,8 @@ impl Vm {
         }
     }
 
+    include!("props_stage_routes.rs");
+
     /// Check if element head is a known int-flag element.
     pub(super) fn is_intflag(head: i32) -> bool {
         crate::elm::global::is_intflag_head(head)
@@ -156,7 +304,107 @@ impl Vm {
         crate::elm::global::is_strflag_head(head)
     }
 
-    pub(super) fn try_property_internal(&mut self, element: &[i32]) -> Option<(PropValue, i32)> {
+    pub(super) fn is_known_internal_property_target(element: &[i32]) -> bool {
+        if element.is_empty() {
+            return false;
+        }
+        let head = element[0];
+        crate::elm::global::is_stage(head)
+            || crate::elm::global::is_back(head)
+            || crate::elm::global::is_front(head)
+            || crate::elm::global::is_next(head)
+            || crate::elm::call::is_cur_call(head)
+            || crate::elm::owner::is_user_prop(head)
+            || Self::is_intflag(head)
+            || Self::is_strflag(head)
+            || crate::elm::global::is_namae_access(head)
+    }
+
+    fn validate_ref_tail_shape(
+        &mut self,
+        tail: &[i32],
+        host: &mut dyn Host,
+        err_tag: &str,
+    ) -> bool {
+        if tail.is_empty() {
+            return false;
+        }
+        let mut pos = 0usize;
+        while pos < tail.len() {
+            let cur = tail[pos];
+            if cur == crate::elm::ELM_UP {
+                if pos == 0 {
+                    host.on_error_fatal(&format!("{}: ELM_UP is not supported", err_tag));
+                } else {
+                    host.on_error_fatal(&format!("{}: unexpected ELM_UP in nested tail", err_tag));
+                }
+                return false;
+            }
+            if cur == crate::elm::ELM_ARRAY {
+                if pos + 1 >= tail.len() {
+                    host.on_error_fatal(&format!("{}: missing array index", err_tag));
+                    return false;
+                }
+                if pos + 2 < tail.len() && tail[pos + 2] == crate::elm::ELM_UP {
+                    host.on_error_fatal(&format!(
+                        "{}: array -> up nested tail is invalid",
+                        err_tag
+                    ));
+                    return false;
+                }
+                pos += 2;
+                continue;
+            }
+            if pos + 1 < tail.len() {
+                host.on_error_fatal(&format!("{}: unexpected nested tail", err_tag));
+                return false;
+            }
+            break;
+        }
+        true
+    }
+    fn try_property_via_ref_target(
+        &mut self,
+        ref_element: &[i32],
+        tail: &[i32],
+        host: &mut dyn Host,
+        err_tag: &str,
+    ) -> Result<Option<(PropValue, i32)>> {
+        if tail.is_empty() {
+            return Ok(None);
+        }
+        if !self.validate_ref_tail_shape(tail, host, err_tag) {
+            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+        }
+        let mut target = self.resolve_command_element_alias(ref_element);
+        if target.is_empty() {
+            host.on_error_fatal(err_tag);
+            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+        }
+        target.extend_from_slice(tail);
+        if target == ref_element {
+            host.on_error_fatal(err_tag);
+            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+        }
+        if let Some(v) = self.try_property_internal(&target, host)? {
+            return Ok(Some(v));
+        }
+        if let Some((ret, form)) = host.on_property_typed(&target) {
+            return Ok(Some((ret, form)));
+        }
+        host.on_error_fatal(err_tag);
+        Ok(Some((PropValue::Int(0), crate::elm::form::INT)))
+    }
+
+    pub(super) fn try_property_internal(
+        &mut self,
+        element: &[i32],
+        host: &mut dyn Host,
+    ) -> Result<Option<(PropValue, i32)>> {
+        if let Some(v) = self.try_property_stage_object_group(element, host) {
+            return Ok(Some(v));
+        }
+
         // ----- Flag int-list reads: A[idx] ... Z[idx] -----
         if element.len() >= 3 && Self::is_intflag(element[0]) && element[1] == crate::elm::ELM_ARRAY
         {
@@ -167,7 +415,7 @@ impl Vm {
                 } else {
                     0
                 };
-                return Some((PropValue::Int(val), crate::elm::form::INT));
+                return Ok(Some((PropValue::Int(val), crate::elm::form::INT)));
             }
         }
         // ----- Flag str-list reads: S[idx] / M[idx] / namae_global[idx] / namae_local[idx] -----
@@ -180,7 +428,7 @@ impl Vm {
                 } else {
                     String::new()
                 };
-                return Some((PropValue::Str(val), crate::elm::form::STR));
+                return Ok(Some((PropValue::Str(val), crate::elm::form::STR)));
             }
         }
         // scene user-prop (best-effort): <user_prop>[idx] / <user_prop>
@@ -192,31 +440,78 @@ impl Vm {
                     let idx = if element.len() >= 3 {
                         element[2]
                     } else {
-                        self.stack.pop_int().unwrap_or(0)
+                        self.report_vm_fatal_with_context(
+                            host,
+                            "CD_PROPERTY: user_prop[list] missing index operand",
+                        );
+                        bail!("CD_PROPERTY: user_prop[list] missing index operand");
                     } as isize;
                     match &self.user_prop_values[up_idx] {
                         PropValue::IntList(v) => {
                             if idx >= 0 {
                                 let out = v.get(idx as usize).copied().unwrap_or(0);
-                                return Some((PropValue::Int(out), crate::elm::form::INT));
+                                return Ok(Some((PropValue::Int(out), crate::elm::form::INT)));
                             }
-                            return Some((PropValue::Int(0), crate::elm::form::INT));
+                            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
                         }
                         PropValue::StrList(v) => {
                             if idx >= 0 {
                                 let out = v.get(idx as usize).cloned().unwrap_or_default();
-                                return Some((PropValue::Str(out), crate::elm::form::STR));
+                                return Ok(Some((PropValue::Str(out), crate::elm::form::STR)));
                             }
-                            return Some((PropValue::Str(String::new()), crate::elm::form::STR));
+                            return Ok(Some((
+                                PropValue::Str(String::new()),
+                                crate::elm::form::STR,
+                            )));
                         }
                         _ => {}
                     }
                 }
-                return Some((self.user_prop_values[up_idx].clone(), form));
+                if form == crate::elm::form::INTLIST || form == crate::elm::form::STRLIST {
+                    return Ok(Some((PropValue::Element(element.to_vec()), form)));
+                }
+                if matches!(
+                    form,
+                    crate::elm::form::INTREF
+                        | crate::elm::form::STRREF
+                        | crate::elm::form::INTLISTREF
+                        | crate::elm::form::STRLISTREF
+                ) {
+                    let ref_target = match &self.user_prop_values[up_idx] {
+                        PropValue::Element(el) => el.clone(),
+                        _ => element.to_vec(),
+                    };
+                    if element.len() > 1 {
+                        return self.try_property_via_ref_target(
+                            &ref_target,
+                            &element[1..],
+                            host,
+                            "CD_PROPERTY user_prop ref: invalid tail route",
+                        );
+                    }
+                    return Ok(Some((PropValue::Element(ref_target), form)));
+                }
+                return Ok(Some((self.user_prop_values[up_idx].clone(), form)));
             }
             // Unknown: default int
-            return Some((PropValue::Int(0), crate::elm::form::INT));
+            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
         }
+        // cur_call.L / cur_call.K whole-list read: return element reference so CD_ASSIGN can consume list source.
+        if element.len() >= 2 && crate::elm::call::is_cur_call(element[0]) && element.len() == 2 {
+            if crate::elm::call::is_call_l(element[1]) {
+                return Ok(Some((
+                    PropValue::Element(vec![element[0], element[1]]),
+                    crate::elm::form::INTLIST,
+                )));
+            }
+            if crate::elm::call::is_call_k(element[1]) {
+                return Ok(Some((
+                    PropValue::Element(vec![element[0], element[1]]),
+                    crate::elm::form::STRLIST,
+                )));
+            }
+        }
+
         // cur_call.L[idx]
         if element.len() >= 4
             && crate::elm::call::is_cur_call(element[0])
@@ -224,14 +519,18 @@ impl Vm {
             && element[2] == crate::elm::ELM_ARRAY
         {
             let idx = element[3] as isize;
+            let Some(frame) = self.frames.last() else {
+                host.on_error_fatal("CD_PROPERTY cur_call.L[idx]: no current frame");
+                return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+            };
             if idx >= 0 {
                 let idx = idx as usize;
-                let call = &self.frames.last()?.call;
+                let call = &frame.call;
                 if idx < call.l.len() {
-                    return Some((PropValue::Int(call.l[idx]), crate::elm::form::INT));
+                    return Ok(Some((PropValue::Int(call.l[idx]), crate::elm::form::INT)));
                 }
             }
-            return Some((PropValue::Int(0), crate::elm::form::INT));
+            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
         }
 
         // cur_call.K[idx]
@@ -241,14 +540,21 @@ impl Vm {
             && element[2] == crate::elm::ELM_ARRAY
         {
             let idx = element[3] as isize;
+            let Some(frame) = self.frames.last() else {
+                host.on_error_fatal("CD_PROPERTY cur_call.K[idx]: no current frame");
+                return Ok(Some((PropValue::Str(String::new()), crate::elm::form::STR)));
+            };
             if idx >= 0 {
                 let idx = idx as usize;
-                let call = &self.frames.last()?.call;
+                let call = &frame.call;
                 if idx < call.k.len() {
-                    return Some((PropValue::Str(call.k[idx].clone()), crate::elm::form::STR));
+                    return Ok(Some((
+                        PropValue::Str(call.k[idx].clone()),
+                        crate::elm::form::STR,
+                    )));
                 }
             }
-            return Some((PropValue::Str(String::new()), crate::elm::form::STR));
+            return Ok(Some((PropValue::Str(String::new()), crate::elm::form::STR)));
         }
 
         // cur_call.<call_prop>
@@ -256,19 +562,51 @@ impl Vm {
             let head = element[1];
             if crate::elm::owner::is_call_prop(head) {
                 let idx = elm_code(head) as usize;
-                let call = &self.frames.last()?.call;
-                if idx < call.user_props.len() {
-                    let p = &call.user_props[idx];
+                let Some(frame) = self.frames.last() else {
+                    host.on_error_fatal("CD_PROPERTY cur_call.<prop>: no current frame");
+                    return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+                };
+                let call = &frame.call;
+                if let Some(slot) = Self::resolve_call_prop_slot(call, idx) {
+                    let p = &call.user_props[slot];
                     if p.form == crate::elm::form::INT {
                         if let PropValue::Int(v) = &p.value {
-                            return Some((PropValue::Int(*v), crate::elm::form::INT));
+                            return Ok(Some((PropValue::Int(*v), crate::elm::form::INT)));
                         }
+                        return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
                     } else if p.form == crate::elm::form::STR {
                         if let PropValue::Str(s) = &p.value {
-                            return Some((PropValue::Str(s.clone()), crate::elm::form::STR));
+                            return Ok(Some((PropValue::Str(s.clone()), crate::elm::form::STR)));
                         }
+                        return Ok(Some((PropValue::Str(String::new()), crate::elm::form::STR)));
+                    } else if p.form == crate::elm::form::INTLIST
+                        || p.form == crate::elm::form::STRLIST
+                    {
+                        return Ok(Some((PropValue::Element(vec![element[0], head]), p.form)));
+                    } else if matches!(
+                        p.form,
+                        crate::elm::form::INTREF
+                            | crate::elm::form::STRREF
+                            | crate::elm::form::INTLISTREF
+                            | crate::elm::form::STRLISTREF
+                    ) {
+                        let ref_target = match &p.value {
+                            PropValue::Element(el) => el.clone(),
+                            _ => vec![element[0], head],
+                        };
+                        if element.len() > 2 {
+                            return self.try_property_via_ref_target(
+                                &ref_target,
+                                &element[2..],
+                                host,
+                                "CD_PROPERTY cur_call.<prop> ref: invalid tail route",
+                            );
+                        }
+                        return Ok(Some((PropValue::Element(ref_target), p.form)));
                     }
                 }
+                host.on_error_fatal("CD_PROPERTY cur_call.<prop>: prop not found");
+                return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
             }
         }
 
@@ -280,28 +618,41 @@ impl Vm {
                 let idx = if element.len() >= 4 {
                     element[3]
                 } else {
-                    self.stack.pop_int().unwrap_or(0)
+                    self.report_vm_fatal_with_context(
+                        host,
+                        "CD_PROPERTY: cur_call.<prop>[idx] missing index operand",
+                    );
+                    bail!("CD_PROPERTY: cur_call.<prop>[idx] missing index operand");
                 } as isize;
-                let call = &self.frames.last()?.call;
-                if cp_idx < call.user_props.len() {
-                    match &call.user_props[cp_idx].value {
+                let Some(frame) = self.frames.last() else {
+                    host.on_error_fatal("CD_PROPERTY cur_call.<prop>[idx]: no current frame");
+                    return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
+                };
+                let call = &frame.call;
+                if let Some(slot) = Self::resolve_call_prop_slot(call, cp_idx) {
+                    match &call.user_props[slot].value {
                         PropValue::IntList(v) => {
                             if idx >= 0 {
                                 let out = v.get(idx as usize).copied().unwrap_or(0);
-                                return Some((PropValue::Int(out), crate::elm::form::INT));
+                                return Ok(Some((PropValue::Int(out), crate::elm::form::INT)));
                             }
-                            return Some((PropValue::Int(0), crate::elm::form::INT));
+                            return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
                         }
                         PropValue::StrList(v) => {
                             if idx >= 0 {
                                 let out = v.get(idx as usize).cloned().unwrap_or_default();
-                                return Some((PropValue::Str(out), crate::elm::form::STR));
+                                return Ok(Some((PropValue::Str(out), crate::elm::form::STR)));
                             }
-                            return Some((PropValue::Str(String::new()), crate::elm::form::STR));
+                            return Ok(Some((
+                                PropValue::Str(String::new()),
+                                crate::elm::form::STR,
+                            )));
                         }
                         _ => {}
                     }
                 }
+                host.on_error_fatal("CD_PROPERTY cur_call.<prop>[idx]: prop not found");
+                return Ok(Some((PropValue::Int(0), crate::elm::form::INT)));
             }
         }
 
@@ -321,265 +672,15 @@ impl Vm {
             if element.len() >= 3 && element[1] == crate::elm::ELM_ARRAY {
                 let idx = element[2] as isize;
                 if idx >= 0 && (idx as usize) < self.global_namae.len() {
-                    return Some((
+                    return Ok(Some((
                         PropValue::Str(self.global_namae[idx as usize].clone()),
                         crate::elm::form::STR,
-                    ));
+                    )));
                 }
-                return Some((PropValue::Str(String::new()), crate::elm::form::STR));
+                return Ok(Some((PropValue::Str(String::new()), crate::elm::form::STR)));
             }
         }
 
-        None
+        Ok(None)
     }
-
-    pub(super) fn try_assign_internal(&mut self, element: &[i32], al_id: i32, rhs: &Prop) -> Result<bool> {
-        // In the original engine, al_id==1 is the common "set" path for properties.
-        if al_id != 1 {
-            return Ok(false);
-        }
-
-        // ----- Flag int-list writes: A[idx] = int -----
-        if element.len() >= 3 && Self::is_intflag(element[0]) && element[1] == crate::elm::ELM_ARRAY
-        {
-            let idx = element[2] as isize;
-            if idx >= 0 {
-                let v = match &rhs.value {
-                    PropValue::Int(x) => *x,
-                    _ => 0,
-                };
-                if let Some(list) = self.get_intflag_mut(element[0]) {
-                    let idx = idx as usize;
-                    if list.len() <= idx {
-                        list.resize(idx + 1, 0);
-                    }
-                    list[idx] = v;
-                }
-            }
-            return Ok(true);
-        }
-
-        // ----- Flag str-list writes: S[idx] = str -----
-        if element.len() >= 3 && Self::is_strflag(element[0]) && element[1] == crate::elm::ELM_ARRAY
-        {
-            let idx = element[2] as isize;
-            if idx >= 0 {
-                let v = match &rhs.value {
-                    PropValue::Str(s) => s.clone(),
-                    _ => String::new(),
-                };
-                if let Some(list) = self.get_strflag_mut(element[0]) {
-                    let idx = idx as usize;
-                    if list.len() <= idx {
-                        list.resize(idx + 1, String::new());
-                    }
-                    list[idx] = v;
-                }
-            }
-            return Ok(true);
-        }
-
-        // ELM_GLOBAL_NAMAE[idx] = "str"
-        if element.len() >= 3
-            && crate::elm::global::is_namae_access(element[0])
-            && element[1] == crate::elm::ELM_ARRAY
-        {
-            let idx = element[2] as isize;
-            if idx >= 0 {
-                let v = match &rhs.value {
-                    PropValue::Str(s) => s.clone(),
-                    _ => String::new(),
-                };
-                let list = &mut self.global_namae;
-                let idx = idx as usize;
-                if list.len() <= idx {
-                    list.resize(idx + 1, String::new());
-                }
-                list[idx] = v;
-            }
-            return Ok(true);
-        }
-
-        // scene user-prop (best-effort) assign: <user_prop>[idx] / <user_prop>
-        if !element.is_empty() && crate::elm::owner::is_user_prop(element[0]) {
-            let up_idx = elm_code(element[0]) as usize;
-            if up_idx < self.user_prop_forms.len() && up_idx < self.user_prop_values.len() {
-                let form = self.user_prop_forms[up_idx];
-                if element.len() >= 3 && element[1] == crate::elm::ELM_ARRAY {
-                    let idx = element[2] as isize;
-                    if idx >= 0 {
-                        let idx = idx as usize;
-                        match (&mut self.user_prop_values[up_idx], &rhs.value) {
-                            (PropValue::IntList(v), PropValue::Int(x)) => {
-                                if v.len() <= idx {
-                                    v.resize(idx + 1, 0);
-                                }
-                                v[idx] = *x;
-                                return Ok(true);
-                            }
-                            (PropValue::StrList(v), PropValue::Str(x)) => {
-                                if v.len() <= idx {
-                                    v.resize(idx + 1, String::new());
-                                }
-                                v[idx] = x.clone();
-                                return Ok(true);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // direct set
-                match form {
-                    f if f == crate::elm::form::INT => {
-                        let v = match &rhs.value {
-                            PropValue::Int(x) => *x,
-                            _ => 0,
-                        };
-                        self.user_prop_values[up_idx] = PropValue::Int(v);
-                    }
-                    f if f == crate::elm::form::STR => {
-                        let v = match &rhs.value {
-                            PropValue::Str(x) => x.clone(),
-                            _ => String::new(),
-                        };
-                        self.user_prop_values[up_idx] = PropValue::Str(v);
-                    }
-                    f if f == crate::elm::form::INTLIST => {
-                        // allow assigning intlist via element fallback (rare); otherwise ignore
-                        if let PropValue::IntList(v) = &rhs.value {
-                            self.user_prop_values[up_idx] = PropValue::IntList(v.clone());
-                        }
-                    }
-                    f if f == crate::elm::form::STRLIST => {
-                        if let PropValue::StrList(v) = &rhs.value {
-                            self.user_prop_values[up_idx] = PropValue::StrList(v.clone());
-                        }
-                    }
-                    _ => {
-                        self.user_prop_values[up_idx] = rhs.value.clone();
-                    }
-                }
-                return Ok(true);
-            }
-        }
-
-        // cur_call.L[idx] = int
-        if element.len() >= 4
-            && crate::elm::call::is_cur_call(element[0])
-            && crate::elm::call::is_call_l(element[1])
-            && element[2] == crate::elm::ELM_ARRAY
-        {
-            let idx = element[3] as isize;
-            if idx >= 0 {
-                let idx = idx as usize;
-                let v = match &rhs.value {
-                    PropValue::Int(x) => *x,
-                    _ => 0,
-                };
-                if let Some(frame) = self.frames.last_mut() {
-                    if idx < frame.call.l.len() {
-                        frame.call.l[idx] = v;
-                        return Ok(true);
-                    }
-                }
-            }
-            return Ok(true);
-        }
-
-        // cur_call.K[idx] = str
-        if element.len() >= 4
-            && crate::elm::call::is_cur_call(element[0])
-            && crate::elm::call::is_call_k(element[1])
-            && element[2] == crate::elm::ELM_ARRAY
-        {
-            let idx = element[3] as isize;
-            if idx >= 0 {
-                let idx = idx as usize;
-                let v = match &rhs.value {
-                    PropValue::Str(s) => s.clone(),
-                    _ => String::new(),
-                };
-                if let Some(frame) = self.frames.last_mut() {
-                    if idx < frame.call.k.len() {
-                        frame.call.k[idx] = v;
-                        return Ok(true);
-                    }
-                }
-            }
-            return Ok(true);
-        }
-
-        // cur_call.<call_prop> = (int/str)
-        if element.len() >= 2 && crate::elm::call::is_cur_call(element[0]) {
-            let head = element[1];
-            if crate::elm::owner::is_call_prop(head) {
-                let idx = elm_code(head) as usize;
-                if let Some(frame) = self.frames.last_mut() {
-                    if idx < frame.call.user_props.len() {
-                        let form = frame.call.user_props[idx].form;
-                        if form == crate::elm::form::INT {
-                            let v = match &rhs.value {
-                                PropValue::Int(x) => *x,
-                                _ => 0,
-                            };
-                            frame.call.user_props[idx].value = PropValue::Int(v);
-                            return Ok(true);
-                        } else if form == crate::elm::form::STR {
-                            let v = match &rhs.value {
-                                PropValue::Str(s) => s.clone(),
-                                _ => String::new(),
-                            };
-                            frame.call.user_props[idx].value = PropValue::Str(v);
-                            return Ok(true);
-                        }
-                    }
-                }
-                return Ok(true);
-            }
-        }
-
-        // cur_call.<call_prop>[idx] = (int/str) (best-effort for local list props)
-        if element.len() >= 4 && crate::elm::call::is_cur_call(element[0]) {
-            let head = element[1];
-            if crate::elm::owner::is_call_prop(head) && element[2] == crate::elm::ELM_ARRAY {
-                let cp_idx = elm_code(head) as usize;
-                let idx = element[3] as isize;
-                if idx >= 0 {
-                    let idx = idx as usize;
-                    if let Some(frame) = self.frames.last_mut() {
-                        if cp_idx < frame.call.user_props.len() {
-                            match &mut frame.call.user_props[cp_idx].value {
-                                PropValue::IntList(v) => {
-                                    let vv = match &rhs.value {
-                                        PropValue::Int(x) => *x,
-                                        _ => 0,
-                                    };
-                                    if idx < v.len() {
-                                        v[idx] = vv;
-                                    }
-                                    return Ok(true);
-                                }
-                                PropValue::StrList(v) => {
-                                    let vv = match &rhs.value {
-                                        PropValue::Str(s) => s.clone(),
-                                        _ => String::new(),
-                                    };
-                                    if idx < v.len() {
-                                        v[idx] = vv;
-                                    }
-                                    return Ok(true);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
-
 }

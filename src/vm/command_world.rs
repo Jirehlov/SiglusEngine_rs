@@ -39,7 +39,7 @@ impl Vm {
                 let size = host.on_world_list_get_size();
                 if size >= 0 && (idx < 0 || idx >= size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のワールド番号が指定されました。(world_list)");
+                        host.on_error_fatal("範囲外のワールド番号が指定されました。(world_list)");
                     }
                     if ret_form == crate::elm::form::INT {
                         self.stack.push_int(0);
@@ -72,7 +72,7 @@ impl Vm {
                 true
             }
             _ => {
-                host.on_error("無効なコマンドが指定されました。(world_list)");
+                host.on_error_fatal("無効なコマンドが指定されました。(world_list)");
                 true
             }
         }
@@ -219,7 +219,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(world)");
+                host.on_error_fatal("無効なコマンドが指定されました。(world)");
                 true
             }
         }

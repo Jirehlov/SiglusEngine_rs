@@ -1,5 +1,18 @@
 include!("host_impl_input.rs");
+include!("host_stage_hit_test.rs");
 include!("host_impl_stage_object.rs");
+include!("host_impl_syscom_capture.rs");
+
+impl GuiHost {
+    fn build_vm_error_context(&self) -> VmErrorContext {
+        VmErrorContext {
+            scene: self.vm_scene.clone(),
+            line_no: self.vm_line_no,
+            pc: self.vm_pc,
+            element: self.vm_element.clone(),
+        }
+    }
+}
 
 impl siglus::vm::Host for GuiHost {
     fn on_name(&mut self, name: &str) {
@@ -42,6 +55,8 @@ impl siglus::vm::Host for GuiHost {
         _named_arg_cnt: i32,
         ret_form: i32,
     ) -> siglus::vm::HostReturn {
+        self.vm_element = element.to_vec();
+
         if is_visual_or_flow_command(element) {
             debug!(
                 "VM command: element={:?} args={} ret_form={}",
@@ -106,6 +121,11 @@ impl siglus::vm::Host for GuiHost {
                             }
                             Err(e) => {
                                 error!("Failed to load stage image {}: {}", s, e);
+                                let _ = self.event_tx.send(HostEvent::VmError {
+                                    level: VmErrorLevel::FileNotFound,
+                                    message: format!("ファイル "{}" が見つかりません。(screen:{})", s, elm),
+                                    context: self.build_vm_error_context(),
+                                });
                                 let _ = self.event_tx.send(HostEvent::MissingPlaneImage {
                                     stage: plane,
                                     name: s.clone(),
@@ -191,13 +211,86 @@ impl siglus::vm::Host for GuiHost {
             self.apply_object_assign(plane, object_index, prop, rhs);
         }
     }
-    fn on_trace(&mut self, _msg: &str) {}
+    fn on_trace(&mut self, _msg: &str) {
+        // Optional default aggregation-template hint for vm.excall.counter traces.
+        // Enable with SIGLUS_EXCALL_COUNTER_TRACE_HINT=1 when consuming
+        // `vm.excall.counter slot=<...> phase=<...> value=<...> active=<...>` lines.
+        static TRACE_HINT_ONCE: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        let show_hint = std::env::var("SIGLUS_EXCALL_COUNTER_TRACE_HINT")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+        if show_hint && !TRACE_HINT_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            debug!(
+                "{}",
+                siglus::vm::format_excall_counter_aggregate_hint("5s")
+            );
+        }
+    }
+
+    fn on_int_event_wait_status_with_proc(
+        &mut self,
+        owner_id: i32,
+        key_skip: bool,
+        status: i32,
+        proc_depth: i32,
+        proc_top: i32,
+    ) {
+        // Default reusable consumer template for syscom wait-owner observation.
+        // Set SIGLUS_WAIT_TRACE=0 to silence default trace output.
+        let trace_on = std::env::var("SIGLUS_WAIT_TRACE")
+            .map(|v| v != "0")
+            .unwrap_or(true);
+        if !trace_on {
+            return;
+        }
+        let phase = siglus::vm::classify_syscom_wait_owner(owner_id);
+        if phase == siglus::vm::VmSyscomWaitPhase::NonSyscom {
+            return;
+        }
+        let line = siglus::vm::format_syscom_wait_trace(
+            owner_id,
+            key_skip,
+            status,
+            proc_depth,
+            proc_top,
+        );
+        debug!("{}", line);
+    }
     fn on_error(&mut self, msg: &str) {
-        // Log error to file instead of showing in UI
         error!("VM Error: {}", msg);
-        // We still send it to UI thread if we want to handle it there (e.g. flash taskbar?)
-        // but for now let's just log it. The user specifically asked to remove on-screen error.
-        // let _ = self.event_tx.send(HostEvent::Error(msg.to_string()));
+        let _ = self.event_tx.send(HostEvent::VmError {
+            level: VmErrorLevel::Fatal,
+            message: msg.to_string(),
+            context: self.build_vm_error_context(),
+        });
+    }
+    fn on_error_fatal(&mut self, msg: &str) {
+        error!("VM Fatal: {}", msg);
+        let _ = self.event_tx.send(HostEvent::VmError {
+            level: VmErrorLevel::Fatal,
+            message: msg.to_string(),
+            context: self.build_vm_error_context(),
+        });
+    }
+    fn on_error_file_not_found(&mut self, msg: &str) {
+        error!("VM FileNotFound: {}", msg);
+        let _ = self.event_tx.send(HostEvent::VmError {
+            level: VmErrorLevel::FileNotFound,
+            message: msg.to_string(),
+            context: self.build_vm_error_context(),
+        });
+    }
+    fn on_resource_exists(&mut self, path: &str) -> bool {
+        resource_exists_like_cpp(&self.base_dir, &self.append_dirs, path)
+    }
+
+    fn on_resource_exists_with_kind(&mut self, path: &str, kind: siglus::vm::VmResourceKind) -> bool {
+        resource_exists_like_cpp_with_kind(&self.base_dir, &self.append_dirs, path, kind)
+    }
+
+    fn on_resource_read_text(&mut self, path: &str) -> Option<String> {
+        read_text_like_cpp(&self.base_dir, &self.append_dirs, path)
     }
     fn on_script_fatal(&mut self, msg: &str) {
         // C++ flow_script.cpp fatal path pushes TNM_PROC_TYPE_NONE and stops script flow.
@@ -465,11 +558,15 @@ impl siglus::vm::Host for GuiHost {
         info!("syscom open_tweet_dialog requested (opening placeholder dialog)");
         let _ = self.event_tx.send(HostEvent::OpenTweetDialog);
     }
-    fn on_location(&mut self, scene_title: &str, scene: &str, line_no: i32) {
+    fn on_location(&mut self, scene_title: &str, scene: &str, line_no: i32, pc: usize) {
+        self.vm_scene = scene.to_string();
+        self.vm_line_no = line_no;
+        self.vm_pc = pc;
         let _ = self.event_tx.send(HostEvent::Location {
             scene_title: scene_title.to_string(),
             scene: scene.to_string(),
             line_no,
+            pc,
         });
     }
     fn on_bgm_play(
@@ -538,98 +635,9 @@ impl siglus::vm::Host for GuiHost {
         let _ = self.event_tx.send(HostEvent::StopPcm { ch });
     }
     impl_host_stage_object_methods!();
+    impl_host_syscom_capture_methods!();
 
-    fn on_int_event_set(
-        &mut self,
-        owner_id: i32,
-        start: i32,
-        end: i32,
-        time: i32,
-        _delay: i32,
-        realtime: i32,
-        value_override: Option<i32>,
-    ) {
-        let actual_start = value_override.unwrap_or(start);
-        if time <= 0 {
-            self.int_events.remove(&owner_id);
-        } else {
-            let duration_ms = if realtime > 0 { time } else { time * 16 };
-            self.int_events.insert(
-                owner_id,
-                IntEventState {
-                    start_val: actual_start,
-                    end_val: end,
-                    duration_ms,
-                    started_at: std::time::Instant::now(),
-                },
-            );
-        }
-    }
-    fn on_int_event_loop(
-        &mut self,
-        owner_id: i32,
-        start: i32,
-        end: i32,
-        time: i32,
-        _delay: i32,
-        _count: i32,
-        realtime: i32,
-    ) {
-        let duration_ms = if realtime > 0 { time } else { time * 16 };
-        self.int_events.insert(
-            owner_id,
-            IntEventState {
-                start_val: start,
-                end_val: end,
-                duration_ms: duration_ms.max(1),
-                started_at: std::time::Instant::now(),
-            },
-        );
-    }
-    fn on_int_event_turn(
-        &mut self,
-        owner_id: i32,
-        start: i32,
-        end: i32,
-        time: i32,
-        _delay: i32,
-        _count: i32,
-        realtime: i32,
-    ) {
-        let duration_ms = if realtime > 0 { time } else { time * 16 };
-        self.int_events.insert(
-            owner_id,
-            IntEventState {
-                start_val: start,
-                end_val: end,
-                duration_ms: duration_ms.max(1),
-                started_at: std::time::Instant::now(),
-            },
-        );
-    }
-    fn on_int_event_end(&mut self, owner_id: i32) {
-        self.int_events.remove(&owner_id);
-    }
-    fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
-    fn on_int_event_check(&mut self, owner_id: i32) -> bool {
-        if let Some(state) = self.int_events.get(&owner_id) {
-            state.started_at.elapsed().as_millis() < state.duration_ms as u128
-        } else {
-            false
-        }
-    }
-    fn on_int_event_get_value(&mut self, owner_id: i32) -> i32 {
-        if let Some(state) = self.int_events.get(&owner_id) {
-            let elapsed = state.started_at.elapsed().as_millis() as i32;
-            if elapsed >= state.duration_ms {
-                return state.end_val;
-            }
-            let progress = elapsed as f32 / state.duration_ms as f32;
-            state.start_val + ((state.end_val - state.start_val) as f32 * progress) as i32
-        } else {
-            0
-        }
-    }
+    include!("host_impl_int_event.rs");
 }
 
 fn parse_wipe_type_from_cpp(elm: i32, args: &[siglus::vm::Prop]) -> i32 {

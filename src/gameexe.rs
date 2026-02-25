@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use encoding_rs::SHIFT_JIS;
 
 const GAMEEXE_DAT_ANGOU_CODE: [u8; 256] = hex_literal::hex!(
@@ -394,11 +394,7 @@ fn strip_inline_comment(line: &str) -> Option<&str> {
     }
 
     let s = line.trim();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn decode_utf16le_lossy(raw: &[u8]) -> String {

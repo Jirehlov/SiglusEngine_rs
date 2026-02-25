@@ -11,6 +11,20 @@
 use super::*;
 
 impl Vm {
+    fn report_intevent_invalid_fatal(host: &mut dyn Host, owner_id: i32, sub: i32) {
+        host.on_error_fatal(&format!(
+            "無効なコマンドが指定されました。(intevent owner={} sub={})",
+            owner_id, sub
+        ));
+    }
+
+    fn report_intevent_list_invalid_fatal(host: &mut dyn Host, owner_id: i32, sub: i32) {
+        host.on_error_fatal(&format!(
+            "無効なコマンドが指定されました。(inteventlist owner={} sub={})",
+            owner_id, sub
+        ));
+    }
+
     // ---------------------------------------------------------------
     // int_event: single event property dispatcher
     // ---------------------------------------------------------------
@@ -27,7 +41,7 @@ impl Vm {
         element: &[i32],
         _arg_list_id: i32,
         args: &[Prop],
-        _ret_form: i32,
+        ret_form: i32,
         host: &mut dyn Host,
         owner_id: i32,
     ) -> bool {
@@ -73,9 +87,9 @@ impl Vm {
                 let end = Self::int_arg(args, 1);
                 let time = Self::int_arg(args, 2);
                 let delay = Self::int_arg(args, 3);
-                let count = Self::int_arg(args, 4);
+                let speed_type = Self::int_arg(args, 4);
                 let realtime = if sub == ELM_INTEVENT_LOOP_REAL { 1 } else { 0 };
-                host.on_int_event_loop(owner_id, start, end, time, delay, count, realtime);
+                host.on_int_event_loop(owner_id, start, end, time, delay, speed_type, realtime);
                 true
             }
 
@@ -86,9 +100,9 @@ impl Vm {
                 let end = Self::int_arg(args, 1);
                 let time = Self::int_arg(args, 2);
                 let delay = Self::int_arg(args, 3);
-                let count = Self::int_arg(args, 4);
+                let speed_type = Self::int_arg(args, 4);
                 let realtime = if sub == ELM_INTEVENT_TURN_REAL { 1 } else { 0 };
-                host.on_int_event_turn(owner_id, start, end, time, delay, count, realtime);
+                host.on_int_event_turn(owner_id, start, end, time, delay, speed_type, realtime);
                 true
             }
 
@@ -101,10 +115,30 @@ impl Vm {
 
             // --- wait / wait_key ---
             ELM_INTEVENT_WAIT | ELM_INTEVENT_WAIT_KEY => {
-                // C++ pushes a TNM_PROC_TYPE_EVENT_WAIT proc.
-                // In headless VM we accept and let host handle the wait semantics.
+                // flow_proc.cpp / ifc_proc_stack alignment:
+                // expose the same observable wait protocol used in property lane.
                 let key_skip = sub == ELM_INTEVENT_WAIT_KEY;
-                host.on_int_event_wait(owner_id, key_skip);
+                let status = if !host.on_int_event_check(owner_id) {
+                    crate::vm::EVE_WAIT_DONE
+                } else if key_skip && host.should_skip_wait() {
+                    crate::vm::EVE_WAIT_KEY_SKIPPED
+                } else {
+                    host.on_int_event_wait(owner_id, key_skip);
+                    host.on_wait_frame();
+                    if host.on_int_event_check(owner_id) {
+                        crate::vm::EVE_WAIT_PENDING
+                    } else {
+                        crate::vm::EVE_WAIT_DONE
+                    }
+                };
+                let (proc_depth, proc_top) = self.observe_proc_stack_tuple();
+                host.on_int_event_wait_status(owner_id, key_skip, status);
+                host.on_int_event_wait_status_with_proc(
+                    owner_id, key_skip, status, proc_depth, proc_top,
+                );
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(status);
+                }
                 true
             }
 
@@ -128,7 +162,21 @@ impl Vm {
 
             // --- yure / yure_real (shake) ---
             ELM_INTEVENT_YURE | ELM_INTEVENT_YURE_REAL => {
-                // accept — host handles shake animation
+                // Use C++ int_event interpolation core with yure-specific parameters.
+                let center = Self::int_arg(args, 0);
+                let swing = Self::int_arg(args, 1);
+                let time = Self::int_arg(args, 2);
+                let delay = Self::int_arg(args, 3);
+                let speed_type = Self::int_arg(args, 4);
+                host.on_int_event_yure(
+                    owner_id,
+                    center,
+                    swing,
+                    time,
+                    delay,
+                    speed_type,
+                    sub == ELM_INTEVENT_YURE_REAL,
+                );
                 true
             }
 
@@ -139,7 +187,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(intevent)");
+                Self::report_intevent_invalid_fatal(host, owner_id, sub);
                 true
             }
         }
@@ -173,7 +221,10 @@ impl Vm {
                 let size = host.on_int_event_list_get_size(owner_id);
                 if size >= 0 && (idx < 0 || idx >= size) {
                     if self.options.disp_out_of_range_error {
-                        host.on_error("範囲外のイベント番号が指定されました。(int_event_list)");
+                        host.on_error_fatal(&format!(
+                            "範囲外のイベント番号が指定されました。(int_event_list owner={} idx={} size={})",
+                            owner_id, idx, size
+                        ));
                     }
                     if ret_form == crate::elm::form::INT {
                         self.stack.push_int(0);
@@ -216,7 +267,7 @@ impl Vm {
             host.on_int_event_list_resize(owner_id, n);
             true
         } else {
-            host.on_error("無効なコマンドが指定されました。(inteventlist)");
+            Self::report_intevent_list_invalid_fatal(host, owner_id, element[0]);
             true
         }
     }

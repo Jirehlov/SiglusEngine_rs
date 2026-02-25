@@ -44,6 +44,18 @@ impl GuiApp {
             tweet_status_line: "未認証です。先に認証してください。".to_string(),
             tweet_confirm_empty: false,
             show_return_to_menu_warning: false,
+            latest_vm_error: None,
+            vm_error_history: Vec::new(),
+            vm_error_last_copied: None,
+            vm_error_copy_notice_until: None,
+            vm_error_filter_recent_copy: false,
+            vm_error_copy_history: Vec::new(),
+            vm_error_copy_selected: BTreeSet::new(),
+            vm_error_pinned: BTreeSet::new(),
+            show_vm_error_panel: false,
+            vm_error_filter: VmErrorFilter::All,
+            vm_error_search: String::new(),
+            vm_error_sort: VmErrorSort::TimeDesc,
             background_texture: None,
             background_textures: BTreeMap::new(),
             missing_background_names: BTreeMap::new(),
@@ -57,6 +69,7 @@ impl GuiApp {
             location_scene_title: String::new(),
             location_scene: String::new(),
             location_line_no: 0,
+            location_pc: 0,
             last_window_title: format!("{} - Siglus", base_title),
             scene_size,
             wipe_started_at: None,
@@ -104,7 +117,10 @@ impl GuiApp {
     fn script_to_viewport_pos(&self, screen: egui::Rect, x: i32, y: i32) -> egui::Pos2 {
         let (stage_rect, scale_x, scale_y) = self.stage_transform(screen);
         let (sx, sy) = if let Some((sw, sh)) = self.scene_size {
-            (x.clamp(0, sw.saturating_sub(1)), y.clamp(0, sh.saturating_sub(1)))
+            (
+                x.clamp(0, sw.saturating_sub(1)),
+                y.clamp(0, sh.saturating_sub(1)),
+            )
         } else {
             (x.max(0), y.max(0))
         };
@@ -168,6 +184,18 @@ impl GuiApp {
                         let _ = self.selection_tx.send(0);
                     } else {
                         self.pending_options = options;
+                    }
+                }
+                HostEvent::VmError {
+                    level,
+                    message,
+                    context,
+                } => {
+                    let ts = Instant::now();
+                    self.latest_vm_error = Some((level, message.clone(), ts, context.clone()));
+                    self.vm_error_history.push((level, message, ts, context));
+                    if self.vm_error_history.len() > 300 {
+                        self.vm_error_history.remove(0);
                     }
                 }
                 HostEvent::Done => {
@@ -304,10 +332,12 @@ impl GuiApp {
                     scene_title,
                     scene,
                     line_no,
+                    pc,
                 } => {
                     self.location_scene_title = scene_title;
                     self.location_scene = scene;
                     self.location_line_no = line_no;
+                    self.location_pc = pc;
                 }
                 HostEvent::MessageWindowVisible(v) => self.message_window_visible = v,
                 HostEvent::MsgBackState(open) => {
@@ -350,7 +380,11 @@ impl GuiApp {
                     let cursor = self.script_to_viewport_pos(viewport_rect, x, y);
                     ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(cursor));
                 }
-                HostEvent::PlayBgm { name, loop_flag, fade_in_ms } => {
+                HostEvent::PlayBgm {
+                    name,
+                    loop_flag,
+                    fade_in_ms,
+                } => {
                     if let Some(am) = &mut self.audio_manager {
                         am.play_bgm(&name, loop_flag, fade_in_ms);
                     }
@@ -370,7 +404,11 @@ impl GuiApp {
                         am.stop_se();
                     }
                 }
-                HostEvent::PlayPcm { ch, name, loop_flag } => {
+                HostEvent::PlayPcm {
+                    ch,
+                    name,
+                    loop_flag,
+                } => {
                     if let Some(am) = &mut self.audio_manager {
                         am.play_pcmch(ch, &name, loop_flag);
                     }
@@ -388,7 +426,7 @@ impl GuiApp {
                     generation,
                 } => {
                     self.handle_object_movie_play(stage, index, file_name, duration_ms, generation)
-                },
+                }
                 HostEvent::StopObjectMovie {
                     stage,
                     index,
@@ -408,7 +446,6 @@ impl GuiApp {
         }
     }
 
-
     fn compose_window_title(&self) -> String {
         let mut title = self.base_title.clone();
         if !self.location_scene_title.is_empty() {
@@ -420,6 +457,7 @@ impl GuiApp {
             if self.location_line_no > 0 {
                 title.push_str(&format!("({})", self.location_line_no));
             }
+            title.push_str(&format!(":pc={}", self.location_pc));
         }
         title.push_str(" - Siglus");
         title
@@ -582,5 +620,4 @@ impl GuiApp {
             }
         }
     }
-
 }

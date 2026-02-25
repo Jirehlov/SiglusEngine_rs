@@ -1,6 +1,5 @@
 use super::*;
 
-
 impl Vm {
     pub(super) fn try_command(
         &mut self,
@@ -17,24 +16,30 @@ impl Vm {
             return Ok(false);
         }
 
-        if let Some(ret) = self.try_command_global_head(
-            element,
-            arg_list_id,
-            args,
-            ret_form,
-            provider,
-            host,
-        )? {
+        if let Some(ret) =
+            self.try_command_global_head(element, arg_list_id, args, ret_form, provider, host)?
+        {
             return Ok(ret);
         }
 
-        if let Some(ret) = self.try_command_global_tail(element, arg_list_id, args, ret_form, host)? {
+        if let Some(ret) =
+            self.try_command_global_tail(element, arg_list_id, args, ret_form, host)?
+        {
             return Ok(ret);
         }
 
         if crate::elm::owner::is_user_cmd(element[0]) {
             let user_cmd_id = elm_code(element[0]) as i32;
-            self.proc_user_cmd_call(user_cmd_id, args, ret_form, false, provider)?;
+            let ex_call_flag = self.frames.last().map(|f| f.excall_flag).unwrap_or(false);
+            self.proc_user_cmd_call(
+                user_cmd_id,
+                args,
+                ret_form,
+                false,
+                ex_call_flag,
+                provider,
+                host,
+            )?;
             return Ok(true);
         }
 

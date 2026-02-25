@@ -84,12 +84,6 @@ pub(super) fn parse_stage_object_command(element: &[i32]) -> Option<(StagePlane,
     None
 }
 
-fn is_object_file_create_command(cmd: i32) -> bool {
-    // IDs from upstream Siglus element table (vendor/const.py, cmd_object.cpp).
-    // These commands all accept file_name as first argument and create/change drawable assets.
-    matches!(cmd, 38 | 43 | 45 | 53 | 129 | 132)
-}
-
 pub(super) fn parse_stage_plane_command(element: &[i32]) -> Option<(StagePlane, i32)> {
     use siglus::elm::ELM_ARRAY;
 

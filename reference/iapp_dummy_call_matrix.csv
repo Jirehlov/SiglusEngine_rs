@@ -1,0 +1,6 @@
+name,total_calls,min_args,max_args,argc_hist,example_args
+object.__iapp_dummy,0 ,0 ,0,"","N/A"
+global.__iapp_dummy,0 ,0 ,0,"","N/A"
+global.__iapp_dummy_str,0 ,0 ,0,"","N/A"
+global.__iapp_dummy2,1 ,4 ,4,"4:1","[int(10), int(10), int(10), stage(1300)]"
+global.__iapp_dummy2_str,1 ,4 ,4,"4:1","[int(10), int(10), int(10), stage(1300)]"

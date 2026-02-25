@@ -2,6 +2,30 @@
 use super::*;
 
 impl Vm {
+    fn script_report_invalid_command(host: &mut dyn Host, sub: i32, scope: &str) {
+        host.on_error_fatal(&format!(
+            "無効なコマンドが指定されました。(script:{} sub={})",
+            scope, sub
+        ));
+    }
+
+    fn script_maybe_report_font_resource(host: &mut dyn Host, font_name: &str, tag: &str) {
+        if font_name.is_empty() {
+            return;
+        }
+        let looks_like_path =
+            font_name.contains('/') || font_name.contains('\\') || font_name.contains('.');
+        if !looks_like_path {
+            return;
+        }
+        if !host.on_resource_exists_with_kind(font_name, VmResourceKind::Generic) {
+            host.on_error_file_not_found(&format!(
+                "ファイル \"{}\" が見つかりません。({})",
+                font_name, tag
+            ));
+        }
+    }
+
     /// Route `global.script.<sub>` commands. Returns `true` if handled.
     pub(super) fn try_command_script(
         &mut self,
@@ -52,7 +76,8 @@ impl Vm {
                 self.script_skip_disable = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_SKIP_DISABLE_FLAG => {
-                self.stack.push_int(if self.script_skip_disable { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_skip_disable { 1 } else { 0 });
                 return true;
             }
             ELM_SCRIPT_SET_CTRL_SKIP_DISABLE => {
@@ -65,12 +90,14 @@ impl Vm {
                 self.script_ctrl_disable = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_CTRL_SKIP_DISABLE_FLAG => {
-                self.stack.push_int(if self.script_ctrl_disable { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_ctrl_disable { 1 } else { 0 });
                 return true;
             }
             ELM_SCRIPT_CHECK_SKIP => {
-                // Headless: never skipping
-                self.stack.push_int(0);
+                // Headless VM fallback: reflect explicit script skip trigger bit.
+                self.stack
+                    .push_int(if self.script_skip_trigger { 1 } else { 0 });
                 return true;
             }
             ELM_SCRIPT_SET_STOP_SKIP_BY_KEY_DISABLE => {
@@ -88,7 +115,7 @@ impl Vm {
 
             // ----- skip unread message -----
             ELM_SCRIPT_SET_SKIP_UNREAD_MESSAGE_FLAG => {
-                self.script_skip_unread_message_flag = arg_int(0);
+                self.script_skip_unread_message_flag = if arg_int(0) != 0 { 1 } else { 0 };
             }
             ELM_SCRIPT_GET_SKIP_UNREAD_MESSAGE_FLAG => {
                 self.stack.push_int(self.script_skip_unread_message_flag);
@@ -163,7 +190,8 @@ impl Vm {
                 self.script_msg_nowait = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_MESSAGE_NOWAIT_FLAG => {
-                self.stack.push_int(if self.script_msg_nowait { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_msg_nowait { 1 } else { 0 });
                 return true;
             }
 
@@ -256,14 +284,19 @@ impl Vm {
                 self.script_mwnd_anime_off_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_MWND_ANIME_OFF_FLAG => {
-                self.stack.push_int(if self.script_mwnd_anime_off_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_mwnd_anime_off_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
             ELM_SCRIPT_SET_MWND_ANIME_ON_FLAG => {
                 self.script_mwnd_anime_on_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_MWND_ANIME_ON_FLAG => {
-                self.stack.push_int(if self.script_mwnd_anime_on_flag { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_mwnd_anime_on_flag { 1 } else { 0 });
                 return true;
             }
 
@@ -272,7 +305,8 @@ impl Vm {
                 self.script_mwnd_disp_off_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_MWND_DISP_OFF_FLAG => {
-                self.stack.push_int(if self.script_mwnd_disp_off_flag { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_mwnd_disp_off_flag { 1 } else { 0 });
                 return true;
             }
 
@@ -281,14 +315,22 @@ impl Vm {
                 self.script_koe_dont_stop_on_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_KOE_DONT_STOP_ON_FLAG => {
-                self.stack.push_int(if self.script_koe_dont_stop_on_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_koe_dont_stop_on_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
             ELM_SCRIPT_SET_KOE_DONT_STOP_OFF_FLAG => {
                 self.script_koe_dont_stop_off_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_KOE_DONT_STOP_OFF_FLAG => {
-                self.stack.push_int(if self.script_koe_dont_stop_off_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_koe_dont_stop_off_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
 
@@ -305,7 +347,8 @@ impl Vm {
                 self.script_quake_stop_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_QUAKE_STOP_FLAG => {
-                self.stack.push_int(if self.script_quake_stop_flag { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_quake_stop_flag { 1 } else { 0 });
                 return true;
             }
 
@@ -314,7 +357,11 @@ impl Vm {
                 self.script_emote_mouth_stop_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_EMOTE_MOUTH_STOP_FLAG => {
-                self.stack.push_int(if self.script_emote_mouth_stop_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_emote_mouth_stop_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
 
@@ -331,7 +378,11 @@ impl Vm {
                 self.script_vsync_wait_off_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_VSYNC_WAIT_OFF_FLAG => {
-                self.stack.push_int(if self.script_vsync_wait_off_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_vsync_wait_off_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
 
@@ -362,25 +413,35 @@ impl Vm {
                 self.script_time_stop_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_TIME_STOP_FLAG => {
-                self.stack.push_int(if self.script_time_stop_flag { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_time_stop_flag { 1 } else { 0 });
                 return true;
             }
             ELM_SCRIPT_SET_COUNTER_TIME_STOP_FLAG => {
                 self.script_counter_time_stop_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_COUNTER_TIME_STOP_FLAG => {
-                self.stack.push_int(if self.script_counter_time_stop_flag { 1 } else { 0 });
+                self.stack.push_int(if self.script_counter_time_stop_flag {
+                    1
+                } else {
+                    0
+                });
                 return true;
             }
             ELM_SCRIPT_SET_FRAME_ACTION_TIME_STOP_FLAG => {
                 self.script_frame_action_time_stop_flag = arg_int(0) != 0;
             }
             ELM_SCRIPT_GET_FRAME_ACTION_TIME_STOP_FLAG => {
-                self.stack.push_int(if self.script_frame_action_time_stop_flag { 1 } else { 0 });
+                self.stack
+                    .push_int(if self.script_frame_action_time_stop_flag {
+                        1
+                    } else {
+                        0
+                    });
                 return true;
             }
             ELM_SCRIPT_SET_STAGE_TIME_STOP_FLAG => {
-                self.script_stage_time_stop_flag = arg_int(0);
+                self.script_stage_time_stop_flag = if arg_int(0) != 0 { 1 } else { 0 };
             }
             ELM_SCRIPT_GET_STAGE_TIME_STOP_FLAG => {
                 self.stack.push_int(self.script_stage_time_stop_flag);
@@ -389,7 +450,9 @@ impl Vm {
 
             // ----- font -----
             ELM_SCRIPT_SET_FONT_NAME => {
-                self.script_font_name = arg_str(0);
+                let name = arg_str(0);
+                Self::script_maybe_report_font_resource(host, &name, "script.set_font_name");
+                self.script_font_name = name;
             }
             ELM_SCRIPT_SET_FONT_NAME_DEFAULT => {
                 self.script_font_name.clear();
@@ -432,7 +495,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error("無効なコマンドが指定されました。(script)");
+                Self::script_report_invalid_command(host, method, "main");
                 return true;
             }
         }
@@ -441,6 +504,63 @@ impl Vm {
         if ret_form == crate::elm::form::INT {
             // C++ script commands generally don't push, but if caller expects INT we
             // behave defensively.
+        }
+        true
+    }
+    pub(super) fn try_command_script_excall(
+        &mut self,
+        slot: usize,
+        element: &[i32],
+        args: &[Prop],
+        _ret_form: i32,
+        host: &mut dyn Host,
+    ) -> bool {
+        if element.is_empty() {
+            return true;
+        }
+        let slot = slot.min(1);
+        let arg_int = |idx: usize| -> i32 {
+            match args.get(idx).map(|p| &p.value) {
+                Some(PropValue::Int(v)) => *v,
+                _ => 0,
+            }
+        };
+        let arg_str = |idx: usize| -> String {
+            match args.get(idx).map(|p| &p.value) {
+                Some(PropValue::Str(s)) => s.clone(),
+                _ => String::new(),
+            }
+        };
+
+        use crate::elm::script::*;
+        match element[0] {
+            ELM_SCRIPT_SET_FONT_NAME => {
+                let name = arg_str(0);
+                Self::script_maybe_report_font_resource(host, &name, "script.excall_set_font_name");
+                self.excall_script_font_name[slot] = name;
+            }
+            ELM_SCRIPT_SET_FONT_NAME_DEFAULT => self.excall_script_font_name[slot].clear(),
+            ELM_SCRIPT_GET_FONT_NAME => {
+                self.stack
+                    .push_str(self.excall_script_font_name[slot].clone());
+                return true;
+            }
+            ELM_SCRIPT_SET_FONT_BOLD => self.excall_script_font_bold[slot] = arg_int(0),
+            ELM_SCRIPT_SET_FONT_BOLD_DEFAULT => self.excall_script_font_bold[slot] = -1,
+            ELM_SCRIPT_GET_FONT_BOLD => {
+                self.stack.push_int(self.excall_script_font_bold[slot]);
+                return true;
+            }
+            ELM_SCRIPT_SET_FONT_SHADOW => self.excall_script_font_shadow[slot] = arg_int(0),
+            ELM_SCRIPT_SET_FONT_SHADOW_DEFAULT => self.excall_script_font_shadow[slot] = -1,
+            ELM_SCRIPT_GET_FONT_SHADOW => {
+                self.stack.push_int(self.excall_script_font_shadow[slot]);
+                return true;
+            }
+            _ => {
+                Self::script_report_invalid_command(host, element[0], "excall");
+                return true;
+            }
         }
         true
     }
