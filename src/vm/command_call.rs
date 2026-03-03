@@ -2,6 +2,7 @@ use super::*;
 
 include!("command_call_excall_frame_action.rs");
 
+#[allow(dead_code)]
 impl Vm {
     /// Route `global.call.<sub>` (call_list level). Returns `true` if handled.
     pub(super) fn try_command_call_list(

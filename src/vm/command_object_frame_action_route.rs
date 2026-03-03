@@ -1,4 +1,24 @@
 impl Vm {
+    fn frame_action_validate_gan_args(method: i32, args: &[Prop], host: &mut dyn Host) -> bool {
+        use crate::elm::objectlist::{ELM_OBJECT_LOAD_GAN, ELM_OBJECT_START_GAN};
+        match method {
+            ELM_OBJECT_LOAD_GAN => {
+                if args.len() != 1 {
+                    host.on_error_fatal("無効なコマンドが指定されました。(frame_action)");
+                    return false;
+                }
+                true
+            }
+            ELM_OBJECT_START_GAN => {
+                if !(1..=3).contains(&args.len()) {
+                    host.on_error_fatal("無効なコマンドが指定されました。(frame_action)");
+                    return false;
+                }
+                true
+            }
+            _ => true,
+        }
+    }
     const FRAME_COUNTER_META_BASE: usize = 3_000_000;
     const FRAME_COUNTER_OBJECT_EPOCH_BASE: usize = 2_600_000;
     const FRAME_COUNTER_META_SPAN: usize = 14;
@@ -298,6 +318,14 @@ impl Vm {
         self.counter_values[cur_slot] = cur;
         self.counter_values[slot] = self.frame_counter_current_value(slot);
     }
+
+    fn frame_counter_tick_real(&mut self, slot: usize, elapsed: i32) {
+        self.frame_counter_tick_inner(slot, elapsed);
+    }
+
+    fn frame_counter_tick_game(&mut self, slot: usize, elapsed: i32) {
+        self.frame_counter_tick_inner(slot, elapsed);
+    }
     fn frame_counter_tick_inner(&mut self, slot: usize, elapsed: i32) {
         if !self.counter_active.get(slot).copied().unwrap_or(false) {
             return;
@@ -478,6 +506,10 @@ impl Vm {
         if sub == ELM_OBJECT_FRAME_ACTION {
             use crate::elm::objectlist::{ELM_OBJECT_LOAD_GAN, ELM_OBJECT_START_GAN};
             if method == ELM_OBJECT_LOAD_GAN || method == ELM_OBJECT_START_GAN {
+                if !Self::frame_action_validate_gan_args(method, args, host) {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 let should_invalidate = if method == ELM_OBJECT_LOAD_GAN {
                     let gan_path = Self::object_arg_str(args, 0);
                     self.object_gan_track_load_changed(list_id, obj_idx, stage_idx, &gan_path)

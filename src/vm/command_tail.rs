@@ -595,14 +595,20 @@ impl Vm {
                 return Ok(Some(true));
             }
             x if crate::elm::global::is_selbtn_family(x) => {
-                // STUB(C++: cmd_global.cpp ELM_GLOBAL_SELBTN/_READY/_CANCEL/_START):
-                // - Gap: selection UI flow (ready/start, return flag wiring, last_sel_msg update)
-                //   is not implemented in headless VM yet.
-                // - Expected behavior: execute selection UI side effects without pushing
-                //   synthetic return values on the VM stack.
-                // - Minimal validation direction: run a scene with SELBTN->SELBTN_START and
-                //   verify stack depth stability plus branch flow parity against C++.
-                return Ok(Some(true));
+                // C++ cmd_global.cpp routes SELBTN/READY/CANCEL/CANCEL_READY/START to
+                // message-window button selection procedures (ready/start).
+                // VM side should not swallow these commands: they are host/UI-owned flow.
+                if matches!(
+                    x,
+                    crate::elm::global::ELM_GLOBAL_SELBTN
+                        | crate::elm::global::ELM_GLOBAL_SELBTN_READY
+                        | crate::elm::global::ELM_GLOBAL_SELBTN_CANCEL
+                        | crate::elm::global::ELM_GLOBAL_SELBTN_CANCEL_READY
+                        | crate::elm::global::ELM_GLOBAL_SELBTN_START
+                        | crate::elm::global::ELM_GLOBAL_SEL_IMAGE
+                ) {
+                    return Ok(Some(false));
+                }
             }
             x if crate::elm::global::is_iapp_dummy(x) => {
                 if ret_form == crate::elm::form::INT {

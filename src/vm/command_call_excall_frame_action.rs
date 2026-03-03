@@ -1,5 +1,5 @@
 impl Vm {
-    const EXCALL_COUNTER_BASE: usize = 5_000_000;
+    pub(super) const EXCALL_COUNTER_BASE: usize = 5_000_000;
     const EXCALL_COUNTER_SCOPE_SPAN: usize = 100_000;
     const EXCALL_FRAME_ACTION_COUNTER_SCOPE: usize = 10_000;
     const EXCALL_FRAME_ACTION_CH_COUNTER_SCOPE: usize = 20_000;

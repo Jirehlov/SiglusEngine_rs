@@ -1,4 +1,30 @@
 impl GuiHost {
+    fn movie_wait_trace_enabled() -> bool {
+        std::env::var("SIGLUS_MOVIE_WAIT_TRACE").map(|v| v != "0").unwrap_or(false)
+    }
+
+    fn wait_movie_gate(&mut self, plane: StagePlane, object_index: i32, key_skip: bool) {
+        if Self::movie_wait_trace_enabled() {
+            log::debug!("vm.movie_wait_trace gate_start stage={:?} index={} key_skip={} state={:?}", plane, object_index, key_skip, self.object_movie_wait_state(plane, object_index));
+        }
+        while !self.is_object_movie_wait_ready(plane, object_index) {
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            self.refresh_movie_lifecycle();
+            if key_skip && self.consume_movie_wait_key_skip_stock() {
+                if Self::movie_wait_trace_enabled() {
+                    log::debug!("vm.movie_wait_trace key_skip_consumed stage={:?} index={} state={:?}", plane, object_index, self.object_movie_wait_state(plane, object_index));
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        if Self::movie_wait_trace_enabled() {
+            log::debug!("vm.movie_wait_trace gate_end stage={:?} index={} key_skip={} state={:?}", plane, object_index, key_skip, self.object_movie_wait_state(plane, object_index));
+        }
+    }
+
     fn handle_object_command_post_render(
         &mut self,
         plane: StagePlane,
@@ -39,12 +65,14 @@ impl GuiHost {
             x if x == siglus::elm::objectlist::ELM_OBJECT_FREE
                 || x == siglus::elm::objectlist::ELM_OBJECT_INIT =>
             {
+                // Lifecycle matrix: FREE/INIT starts a clean slot and must drop prior terminal movie flags.
                 let st = self.get_or_create_object_state(plane, object_index);
                 reset_object_state_preserve_seq(st);
                 self.movie_playing_objects.remove(&(plane, object_index));
+                self.movie_ready_objects.remove(&(plane, object_index));
                 self.movie_generations.remove(&(plane, object_index));
                 self.movie_auto_free_ms.remove(&(plane, object_index));
-                self.movie_last_failure.remove(&(plane, object_index));
+                self.clear_movie_terminal_state(plane, object_index);
                 self.clear_object_string_state(plane, object_index);
                 self.clear_object_string_style_state(plane, object_index);
                 self.clear_object_number_state(plane, object_index);
@@ -63,7 +91,9 @@ impl GuiHost {
                 });
             }
             x if x == siglus::elm::objectlist::ELM_OBJECT_RESUME_MOVIE => {
+                // Lifecycle matrix: RESUME dispatches a fresh generation; clear stale terminal snapshots first.
                 self.movie_playing_objects.insert((plane, object_index));
+                self.movie_ready_objects.remove(&(plane, object_index));
                 let duration_ms = self
                     .movie_auto_free_ms
                     .get(&(plane, object_index))
@@ -74,7 +104,7 @@ impl GuiHost {
                 self.next_movie_generation = self.next_movie_generation.saturating_add(1);
                 self.movie_generations
                     .insert((plane, object_index), generation);
-                self.movie_last_failure.remove(&(plane, object_index));
+                self.clear_movie_terminal_state(plane, object_index);
                 let file_name = self
                     .objects
                     .get(&(plane, object_index))
@@ -92,6 +122,7 @@ impl GuiHost {
                 || x == siglus::elm::objectlist::ELM_OBJECT_END_MOVIE_LOOP =>
             {
                 self.movie_playing_objects.remove(&(plane, object_index));
+                self.movie_ready_objects.remove(&(plane, object_index));
                 let generation = self
                     .movie_generations
                     .remove(&(plane, object_index))
@@ -102,17 +133,13 @@ impl GuiHost {
                     generation,
                 });
             }
-            x if x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE
-                || x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE_KEY =>
-            {
-                while self.movie_playing_objects.contains(&(plane, object_index)) {
-                    if self.shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    self.refresh_movie_lifecycle();
-                    std::thread::sleep(std::time::Duration::from_millis(8));
-                }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE => {
+                self.wait_movie_gate(plane, object_index, false);
             }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_WAIT_MOVIE_KEY => {
+                self.wait_movie_gate(plane, object_index, true);
+            }
+            // Lifecycle matrix: CREATE_MOVIE* dispatches a fresh generation; terminal state must be reset.
             x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE
                 || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_LOOP
                 || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT
@@ -143,7 +170,8 @@ impl GuiHost {
                 self.movie_generations
                     .insert((plane, object_index), generation);
                 self.movie_playing_objects.insert((plane, object_index));
-                self.movie_last_failure.remove(&(plane, object_index));
+                self.movie_ready_objects.remove(&(plane, object_index));
+                self.clear_movie_terminal_state(plane, object_index);
                 let _ = self.event_tx.send(HostEvent::PlayObjectMovie {
                     stage: plane,
                     index: object_index,
@@ -151,6 +179,11 @@ impl GuiHost {
                     duration_ms,
                     generation,
                 });
+                if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT {
+                    self.wait_movie_gate(plane, object_index, false);
+                } else if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT_KEY {
+                    self.wait_movie_gate(plane, object_index, true);
+                }
             }
             x if x == siglus::elm::objectlist::ELM_OBJECT_SET_MOVIE_AUTO_FREE => {
                 let ms = args

@@ -31,7 +31,7 @@ impl Vm {
         }
     }
 
-    fn notify_syscom_proc_wait_observation(&self, host: &mut dyn Host, owner_id: i32) {
+    pub(super) fn notify_syscom_proc_wait_observation(&self, host: &mut dyn Host, owner_id: i32) {
         let (proc_depth, proc_top) = self.observe_proc_stack_tuple();
         host.on_int_event_wait_status(owner_id, false, crate::vm::EVE_WAIT_DONE);
         host.on_int_event_wait_status_with_proc(

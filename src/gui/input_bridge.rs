@@ -15,7 +15,7 @@ struct FlickSample {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct InputButtonTracker {
-    is_down: bool,
+    pub(super) is_down: bool,
     down_stock: u8,
     up_stock: u8,
     repeat_stock: u8,

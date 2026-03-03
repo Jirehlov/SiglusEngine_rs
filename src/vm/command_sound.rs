@@ -1,7 +1,7 @@
 use super::*;
 
 impl Vm {
-    fn sound_arg_str(args: &[Prop], idx: usize) -> String {
+    pub(super) fn sound_arg_str(args: &[Prop], idx: usize) -> String {
         match args.get(idx).map(|p| &p.value) {
             Some(PropValue::Str(v)) => v.clone(),
             Some(PropValue::Int(v)) => v.to_string(),
@@ -9,7 +9,7 @@ impl Vm {
         }
     }
 
-    fn sound_report_file_not_found(
+    pub(super) fn sound_report_file_not_found(
         host: &mut dyn Host,
         path: &str,
         tag: &str,
@@ -26,9 +26,9 @@ impl Vm {
         }
     }
 
-    const TNM_BGM_START_POS_INI: i32 = -1;
+    pub(super) const TNM_BGM_START_POS_INI: i32 = -1;
 
-    fn sound_report_invalid_command(host: &mut dyn Host, group: &str, sub: i32) {
+    pub(super) fn sound_report_invalid_command(host: &mut dyn Host, group: &str, sub: i32) {
         host.on_error_fatal(&format!(
             "無効なコマンドが指定されました。({} sub={})",
             group, sub

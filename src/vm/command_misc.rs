@@ -271,7 +271,6 @@ impl Vm {
         scene: &str,
         z_no: i32,
         provider: &mut dyn SceneProvider,
-        host: &mut dyn Host,
     ) -> Result<()> {
         let dat = provider.get_scene(scene)?;
         self.scene = scene.to_string();
@@ -289,7 +288,6 @@ impl Vm {
         call_args: &[Prop],
         ex_call_flag: bool,
         provider: &mut dyn SceneProvider,
-        host: &mut dyn Host,
     ) -> Result<()> {
         // Set return type expectation on the caller.
         if let Some(frame) = self.frames.last_mut() {

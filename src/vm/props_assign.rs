@@ -25,10 +25,7 @@ impl Vm {
                             form
                         );
                     }
-                    return match ret {
-                        PropValue::Int(n) => Ok(n),
-                        _ => bail!("CD_ASSIGN: host typed source payload mismatch INT"),
-                    };
+                    return Ok(ret.int);
                 }
                 bail!("CD_ASSIGN: unresolved INT source element");
             }
@@ -57,10 +54,7 @@ impl Vm {
                             form
                         );
                     }
-                    return match ret {
-                        PropValue::Str(text) => Ok(text),
-                        _ => bail!("CD_ASSIGN: host typed source payload mismatch STR"),
-                    };
+                    return Ok(ret.str_);
                 }
                 bail!("CD_ASSIGN: unresolved STR source element");
             }

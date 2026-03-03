@@ -549,3 +549,19 @@ pub fn strflag_slot(head: i32) -> Option<u8> {
 pub fn is_namae_access(head: i32) -> bool {
     head == crate::elm::global::ELM_GLOBAL_NAMAE
 }
+
+pub fn is_stage(elm: i32) -> bool {
+    elm == ELM_GLOBAL_STAGE
+}
+
+pub fn is_back(elm: i32) -> bool {
+    elm == ELM_GLOBAL_BACK
+}
+
+pub fn is_front(elm: i32) -> bool {
+    elm == ELM_GLOBAL_FRONT
+}
+
+pub fn is_next(elm: i32) -> bool {
+    elm == ELM_GLOBAL_NEXT
+}

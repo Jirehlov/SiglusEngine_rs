@@ -448,10 +448,13 @@ impl GuiApp {
                 ),
                 egui::vec2(SEL_BUTTON_WIDTH, SEL_BUTTON_HEIGHT),
             );
-
-            let resp = ui.allocate_rect(btn_rect, egui::Sense::click());
-            let is_hovered = resp.hovered();
-            let bg = if is_hovered {
+            let enabled = option.item_type != 0;
+            let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+            let resp = ui.allocate_rect(btn_rect, sense);
+            let is_hovered = enabled && resp.hovered();
+            let bg = if !enabled {
+                egui::Color32::from_rgba_premultiplied(50, 50, 56, 180)
+            } else if is_hovered {
                 SEL_BUTTON_HOVER_BG
             } else {
                 SEL_BUTTON_BG
@@ -467,28 +470,35 @@ impl GuiApp {
                         if is_hovered { 140 } else { 80 },
                         if is_hovered { 180 } else { 100 },
                         255,
-                        if is_hovered { 200 } else { 80 },
+                        if is_hovered { 200 } else { if enabled { 80 } else { 40 } },
                     ),
                 ),
                 egui::StrokeKind::Outside,
             );
 
+            let text_color = if option.color >= 0 {
+                egui::Color32::from_rgb(
+                    ((option.color >> 16) & 0xff) as u8,
+                    ((option.color >> 8) & 0xff) as u8,
+                    (option.color & 0xff) as u8,
+                )
+            } else if enabled {
+                egui::Color32::from_rgb(220, 230, 250)
+            } else {
+                egui::Color32::from_rgb(160, 160, 170)
+            };
             let font = egui::FontId::proportional(17.0);
-            let galley = ui.painter().layout_no_wrap(
-                option.clone(),
-                font,
-                egui::Color32::from_rgb(220, 230, 250),
-            );
+            let galley = ui.painter().layout_no_wrap(option.text.clone(), font, text_color);
             ui.painter().galley(
                 egui::pos2(
                     btn_rect.center().x - galley.size().x / 2.0,
                     btn_rect.center().y - galley.size().y / 2.0,
                 ),
                 galley,
-                egui::Color32::WHITE,
+                text_color,
             );
 
-            if resp.clicked() {
+            if enabled && resp.clicked() {
                 clicked_index = Some(i);
             }
         }
@@ -496,6 +506,7 @@ impl GuiApp {
         if let Some(idx) = clicked_index {
             let _ = self.selection_tx.send(idx as i32);
             self.pending_options.clear();
+            self.pending_selbtn = None;
         }
     }
 

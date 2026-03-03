@@ -80,6 +80,15 @@ include!("movie_events.rs");
 
 include!("stage_plane.rs");
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MovieWaitState {
+    Pending,
+    Ready,
+    Failed,
+    Interrupted,
+}
+
+
 #[derive(Debug, Clone)]
 struct HostObjectState {
     file_name: String,
@@ -117,6 +126,11 @@ struct HostObjectState {
     dark: f32,
     mono: f32,
     reverse: bool,
+    movie_auto_init: bool,
+    movie_real_time: bool,
+    movie_ready_only: bool,
+    emote_rep_x: i32,
+    emote_rep_y: i32,
     seq: u64,
 }
 
@@ -212,9 +226,11 @@ struct GuiHost {
     stage_group_sizes: BTreeMap<StagePlane, i32>,
     groups: BTreeMap<(StagePlane, i32), HostGroupState>,
     movie_playing_objects: std::collections::BTreeSet<(StagePlane, i32)>,
+    movie_ready_objects: std::collections::BTreeSet<(StagePlane, i32)>,
     movie_auto_free_ms: BTreeMap<(StagePlane, i32), i32>,
     movie_generations: BTreeMap<(StagePlane, i32), u64>,
     movie_last_failure: BTreeMap<(StagePlane, i32), MovieFailureInfo>,
+    movie_interrupted_objects: std::collections::BTreeSet<(StagePlane, i32)>,
     next_movie_generation: u64,
     global_mov_playing: bool,
     mwnd_list_size: i32,
@@ -233,6 +249,7 @@ struct GuiHost {
     vm_pc: usize,
     vm_element: Vec<i32>,
     capture_buffer: Option<HostCaptureBuffer>,
+    pending_selbtn_request: Option<SelectionRequest>,
 }
 
 include!("prop_int_ext.rs");
@@ -256,7 +273,8 @@ struct GuiApp {
     queued_advance_stock: usize,
     hide_message_window: bool,
     message_window_visible: bool,
-    pending_options: Vec<String>,
+    pending_options: Vec<SelectionOption>,
+    pending_selbtn: Option<SelBtnNamedArgs>,
     backlog: Vec<String>,
     done: bool,
     show_backlog: bool,
@@ -503,9 +521,11 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 stage_group_sizes: BTreeMap::new(),
                 groups: BTreeMap::new(),
                 movie_playing_objects: std::collections::BTreeSet::new(),
+                movie_ready_objects: std::collections::BTreeSet::new(),
                 movie_auto_free_ms: BTreeMap::new(),
                 movie_generations: BTreeMap::new(),
                 movie_last_failure: BTreeMap::new(),
+                movie_interrupted_objects: std::collections::BTreeSet::new(),
                 next_movie_generation: 1,
                 global_mov_playing: false,
                 mwnd_list_size: 1,
@@ -524,6 +544,7 @@ fn run_gui(args: RunConfig) -> Result<()> {
                 vm_pc: 0,
                 vm_element: Vec::new(),
                 capture_buffer: None,
+                pending_selbtn_request: None,
             };
 
             let state_in = match load_persistent_state(&args.persistent_state_path) {

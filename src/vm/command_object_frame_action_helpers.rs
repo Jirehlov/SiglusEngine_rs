@@ -63,7 +63,7 @@ impl Vm {
         }
     }
 
-    fn excall_counter_trace_enabled() -> bool {
+    pub(super) fn excall_counter_trace_enabled() -> bool {
         std::env::var("SIGLUS_EXCALL_COUNTER_TRACE")
             .map(|v| v != "0")
             .unwrap_or(false)

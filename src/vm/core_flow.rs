@@ -1,7 +1,7 @@
 use super::*;
 
 impl Vm {
-    fn is_flick_scene_allowed(&self, host: &mut dyn Host) -> bool {
+    pub(super) fn is_flick_scene_allowed(&self, host: &mut dyn Host) -> bool {
         if self.game_timer_move_flag == 0 {
             return false;
         }

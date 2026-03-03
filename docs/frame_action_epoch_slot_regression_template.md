@@ -116,7 +116,7 @@
 - 偏差说明（若 FAIL）：
 - 关联代码位置（Rust/C++）：
 
-## 五、Host Trace 开关与执行手册（A~E 场景）
+## 五、Host Trace 开关与执行手册（A~F 场景）
 
 ### 1) 开关说明
 
@@ -137,7 +137,7 @@ cargo run --bin siglus_rust_gui -- --gameexe <Gameexe.dat> --pck <Scene.pck>
 ### 2) 场景执行步骤（通用）
 
 1. 启动前打开上述开关。
-2. 逐个执行 A→E 场景脚本模板。
+2. 逐个执行 A→F 场景脚本模板。
 3. 每个场景结束后抓取对应日志窗口（建议 5s bucket）。
 4. 按“日志断言格式模板”执行断言。
 
@@ -191,7 +191,7 @@ cargo run --bin siglus_rust_gui -- --gameexe <Gameexe.dat> --pck <Scene.pck>
 | `... frame_action_ch.resize ...` | 触发重绑定。 |
 | `... slot=5300123 phase=start ... epoch=8 ...` | `assert_epoch_monotonic(5300123)`：新 epoch > 旧 epoch。 |
 
-## 七、A~E 场景日志+断言样例（每场景最少 2 对）
+## 七、A~F 场景日志+断言样例（每场景最少 2 对）
 
 ### 场景 A（双 stage 快切 + 同帧 resize）
 
@@ -228,6 +228,16 @@ cargo run --bin siglus_rust_gui -- --gameexe <Gameexe.dat> --pck <Scene.pck>
 | `... slot=5100002 scope=0 phase=start value=0 active=true` | E-1: scope0 建立。 |
 | `... slot=5200002 scope=1 phase=start value=0 active=true` | E-2: `assert_scope_isolation(5100002, 5200002)`。 |
 
+### 场景 F（多 stage 切换 + resize + wait 组合）
+
+| 日志样例 | 预期断言 |
+|---|---|
+| `... stage=0 slot=5300101 epoch=12 phase=start ...` | F-1: 初始 stage 建立活动槽位。 |
+| `... frame_action_ch resize stage=1 ...` + `counter_observe wait ...` | F-2: 需同时命中 resize 与 wait 观测。 |
+| `... stage=1 slot=5300101 epoch=13 phase=reclaim ...` | F-3: 回收后不得再推进旧 epoch。 |
+
+参考样例日志：`reference/frame_action_epoch_slot_stage_switch_sample.log`。
+
 ## 八、`frame_action.counter` 参数矩阵（method-by-method）
 
 > 适用路径：`array[idx].up.counter.<method>`。
@@ -248,7 +258,7 @@ cargo run --bin siglus_rust_gui -- --gameexe <Gameexe.dat> --pck <Scene.pck>
 | `check_value` | 1 | 同上 |
 | `check_active` | 1 | 同上 |
 
-## 九、A~E 场景“通过/失败”样例对照
+## 九、A~F 场景“通过/失败”样例对照
 
 ### A：双 stage 快切
 
@@ -289,7 +299,7 @@ cargo run --bin siglus_rust_gui -- --gameexe <Gameexe.dat> --pck <Scene.pck>
 
 ## 十、自动化采样脚本骨架（伪代码）
 
-> 目标：把 A~E 场景从“手工观测”收敛为“固定采样 + 自动判定”。
+> 目标：把 A~F 场景从“手工观测”收敛为“固定采样 + 自动判定”。
 
 ```text
 function run_case(case_id):

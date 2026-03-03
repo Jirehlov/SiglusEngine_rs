@@ -12,6 +12,214 @@ impl GuiHost {
             element: self.vm_element.clone(),
         }
     }
+
+    fn parse_selbtn_request(
+        &self,
+        elm: i32,
+        args: &[siglus::vm::Prop],
+    ) -> SelectionRequest {
+        let mut req = SelectionRequest::default();
+        let positional: Vec<&siglus::vm::Prop> = args.iter().filter(|p| p.id == 0).collect();
+        let mut idx = 0usize;
+        if matches!(
+            positional.first().map(|p| &p.value),
+            Some(siglus::vm::PropValue::Int(_))
+        ) {
+            idx = 1; // template_no
+        }
+
+        let mut pending: Option<SelectionOption> = None;
+        let mut item_arg_no = 0;
+        while idx < positional.len() {
+            match &positional[idx].value {
+                siglus::vm::PropValue::Str(text) => {
+                    if let Some(prev) = pending.take() {
+                        req.options.push(prev);
+                    }
+                    pending = Some(SelectionOption {
+                        text: text.clone(),
+                        item_type: 1,
+                        color: -1,
+                    });
+                    item_arg_no = 0;
+                }
+                siglus::vm::PropValue::Int(v) => {
+                    if let Some(cur) = pending.as_mut() {
+                        match item_arg_no {
+                            1 => cur.item_type = *v,
+                            2 => cur.color = *v,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            item_arg_no += 1;
+            idx += 1;
+        }
+        if let Some(prev) = pending.take() {
+            req.options.push(prev);
+        }
+        let mut named = SelBtnNamedArgs::default();
+        named.read_flag_scene = self.vm_scene.clone();
+        named.read_flag_line_no = self.vm_line_no;
+        named.cancel_enable = matches!(
+            elm,
+            siglus::elm::global::ELM_GLOBAL_SELBTN_CANCEL
+                | siglus::elm::global::ELM_GLOBAL_SELBTN_CANCEL_READY
+        );
+        for p in args.iter().filter(|p| p.id > 0) {
+            match p.id {
+                1 => {
+                    if let siglus::vm::PropValue::Int(v) = p.value {
+                        named.capture_flag = v != 0;
+                    }
+                }
+                2 => {
+                    if let siglus::vm::PropValue::Str(ref v) = p.value {
+                        named.sel_start_call_scn = v.clone();
+                    }
+                }
+                3 => {
+                    if let siglus::vm::PropValue::Int(v) = p.value {
+                        named.sel_start_call_z_no = v;
+                    }
+                }
+                4 => {
+                    if let siglus::vm::PropValue::Int(v) = p.value {
+                        named.sync_type = v;
+                    }
+                }
+                5 => {
+                    if let siglus::vm::PropValue::Str(ref v) = p.value {
+                        named.read_flag_scene = v.clone();
+                    }
+                }
+                6 => {
+                    if let siglus::vm::PropValue::Int(v) = p.value {
+                        named.read_flag_line_no = v;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if matches!(
+            elm,
+            siglus::elm::global::ELM_GLOBAL_SELBTN
+                | siglus::elm::global::ELM_GLOBAL_SELBTN_READY
+                | siglus::elm::global::ELM_GLOBAL_SELBTN_CANCEL
+                | siglus::elm::global::ELM_GLOBAL_SELBTN_CANCEL_READY
+                | siglus::elm::global::ELM_GLOBAL_SELBTN_START
+        ) {
+            req.selbtn = Some(named);
+        }
+        req
+    }
+
+    fn cache_selbtn_ready_options(&mut self, elm: i32, args: &[siglus::vm::Prop]) {
+        let req = self.parse_selbtn_request(elm, args);
+        let sync_type = req.selbtn.as_ref().map(|v| v.sync_type).unwrap_or(0);
+        self.emit_selbtn_sync_checkpoint(sync_type, req.selbtn.as_ref().map(|v| v.cancel_enable).unwrap_or(false), "ready_cached", req.options.len(), None);
+        self.pending_selbtn_request = Some(req);
+    }
+
+    fn resolve_selbtn_start_request(&self, elm: i32, args: &[siglus::vm::Prop]) -> SelectionRequest {
+        let mut req = self.parse_selbtn_request(elm, args);
+        if req.options.is_empty() {
+            if let Some(prev) = &self.pending_selbtn_request {
+                req.options = prev.options.clone();
+                if req.selbtn.is_none() {
+                    req.selbtn = prev.selbtn.clone();
+                } else if let (Some(cur), Some(old)) = (req.selbtn.as_mut(), prev.selbtn.as_ref()) {
+                    if cur.sel_start_call_scn.is_empty() {
+                        cur.sel_start_call_scn = old.sel_start_call_scn.clone();
+                    }
+                    if cur.sel_start_call_z_no < 0 {
+                        cur.sel_start_call_z_no = old.sel_start_call_z_no;
+                    }
+                    if cur.sync_type == 0 {
+                        cur.sync_type = old.sync_type;
+                    }
+                    if !cur.capture_flag {
+                        cur.capture_flag = old.capture_flag;
+                    }
+                    if !cur.cancel_enable {
+                        cur.cancel_enable = old.cancel_enable;
+                    }
+                    if cur.read_flag_scene.is_empty() {
+                        cur.read_flag_scene = old.read_flag_scene.clone();
+                    }
+                    if cur.read_flag_line_no < 0 {
+                        cur.read_flag_line_no = old.read_flag_line_no;
+                    }
+                }
+            }
+        }
+        req
+    }
+
+    fn emit_selbtn_sync_checkpoint(
+        &mut self,
+        sync_type: i32,
+        cancel_enable: bool,
+        phase: &'static str,
+        option_count: usize,
+        selected: Option<i32>,
+    ) {
+        let _ = self.event_tx.send(HostEvent::SelBtnSyncCheckpoint {
+            sync_type,
+            cancel_enable,
+            phase,
+            option_count,
+            selected,
+        });
+    }
+
+    fn run_selection_wait(&mut self, req: SelectionRequest) -> i32 {
+        let sync_type = req.selbtn.as_ref().map(|v| v.sync_type).unwrap_or(-1);
+        let cancel_enable = req.selbtn.as_ref().map(|v| v.cancel_enable).unwrap_or(false);
+        let option_count = req.options.len();
+        if sync_type >= 0 {
+            self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "wait_enter", option_count, None);
+        }
+        let _ = self.event_tx.send(HostEvent::Selection(req));
+        let selected = self.selection_rx.recv().unwrap_or(0);
+        if sync_type >= 0 {
+            self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "choice_received", option_count, Some(selected));
+            match sync_type {
+                0 => self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "sync0_close_end", option_count, Some(selected)),
+                1 => self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "sync1_close_start", option_count, Some(selected)),
+                2 => self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "sync2_decide", option_count, Some(selected)),
+                _ => self.emit_selbtn_sync_checkpoint(sync_type, cancel_enable, "sync_unknown", option_count, Some(selected)),
+            }
+        }
+        if let Some(selbtn) = req.selbtn.as_ref() {
+            if selected < 0 && selbtn.cancel_enable {
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), true, "cancel_input", option_count, Some(selected));
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), true, "cancel_complete", option_count, Some(selected));
+            }
+            if selected >= 0 {
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), cancel_enable, "read_flag_mark", option_count, Some(selected));
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), cancel_enable, "read_flag_complete", option_count, Some(selected));
+            } else {
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), cancel_enable, "read_flag_skip_cancel", option_count, Some(selected));
+            }
+            if selbtn.capture_flag && selected >= 0 {
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), cancel_enable, "capture_requested", option_count, Some(selected));
+                self.emit_selbtn_sync_checkpoint(sync_type.max(0), cancel_enable, "capture_finished", option_count, Some(selected));
+                if !selbtn.sel_start_call_scn.is_empty() && selbtn.sel_start_call_z_no >= 0 {
+                    self.emit_selbtn_sync_checkpoint(
+                        sync_type.max(0),
+                        cancel_enable,
+                        "sel_start_call_queued",
+                        option_count,
+                        Some(selected),
+                    );
+                }
+            }
+        }
+        selected
+    }
 }
 
 impl siglus::vm::Host for GuiHost {
@@ -85,6 +293,9 @@ impl siglus::vm::Host for GuiHost {
 
             const ELM_GLOBAL_SELBTN: i32 = 76;
             const ELM_GLOBAL_SELBTN_CANCEL: i32 = 77;
+            const ELM_GLOBAL_SELBTN_READY: i32 = 126;
+            const ELM_GLOBAL_SELBTN_START: i32 = 127;
+            const ELM_GLOBAL_SELBTN_CANCEL_READY: i32 = 128;
 
             if element.len() == 1
                 && matches!(
@@ -123,7 +334,7 @@ impl siglus::vm::Host for GuiHost {
                                 error!("Failed to load stage image {}: {}", s, e);
                                 let _ = self.event_tx.send(HostEvent::VmError {
                                     level: VmErrorLevel::FileNotFound,
-                                    message: format!("ファイル "{}" が見つかりません。(screen:{})", s, elm),
+                                    message: format!("ファイル \"{}\" が見つかりません。(screen:{})", s, elm),
                                     context: self.build_vm_error_context(),
                                 });
                                 let _ = self.event_tx.send(HostEvent::MissingPlaneImage {
@@ -153,35 +364,72 @@ impl siglus::vm::Host for GuiHost {
                 return siglus::vm::HostReturn::default();
             }
 
+            if matches!(elm, ELM_GLOBAL_SELBTN_READY | ELM_GLOBAL_SELBTN_CANCEL_READY) {
+                // C++ cmd_global.cpp: *_READY only prepares button-selection candidates.
+                // Start/return wiring is triggered later by SELBTN_START.
+                self.cache_selbtn_ready_options(elm, args);
+                return siglus::vm::HostReturn::default();
+            }
+
+            if matches!(elm, ELM_GLOBAL_SELBTN | ELM_GLOBAL_SELBTN_CANCEL)
+                && ret_form == siglus::elm::form::INT
+            {
+                // C++ cmd_global.cpp executes READY + START in one command for SELBTN/CANCEL.
+                let req = self.resolve_selbtn_start_request(elm, args);
+                let sync_type = req.selbtn.as_ref().map(|v| v.sync_type).unwrap_or(0);
+                self.emit_selbtn_sync_checkpoint(sync_type, req.selbtn.as_ref().map(|v| v.cancel_enable).unwrap_or(false), "start_resolved", req.options.len(), None);
+                if req.options.is_empty() {
+                    return siglus::vm::HostReturn {
+                        int: -1,
+                        ..siglus::vm::HostReturn::default()
+                    };
+                }
+                self.pending_selbtn_request = Some(req.clone());
+                let selected = self.run_selection_wait(req);
+                return siglus::vm::HostReturn {
+                    int: selected,
+                    ..siglus::vm::HostReturn::default()
+                };
+            }
+
+            if elm == ELM_GLOBAL_SELBTN_START && ret_form == siglus::elm::form::INT {
+                // C++ start path consumes previously prepared ready-state when no args are supplied.
+                let req = self.resolve_selbtn_start_request(elm, args);
+                let sync_type = req.selbtn.as_ref().map(|v| v.sync_type).unwrap_or(0);
+                self.emit_selbtn_sync_checkpoint(sync_type, req.selbtn.as_ref().map(|v| v.cancel_enable).unwrap_or(false), "start_resolved", req.options.len(), None);
+                if req.options.is_empty() {
+                    return siglus::vm::HostReturn {
+                        int: -1,
+                        ..siglus::vm::HostReturn::default()
+                    };
+                }
+                let selected = self.run_selection_wait(req);
+                return siglus::vm::HostReturn {
+                    int: selected,
+                    ..siglus::vm::HostReturn::default()
+                };
+            }
+
             if matches!(
                 elm,
                 siglus::elm::global::ELM_GLOBAL_SEL
                     | siglus::elm::global::ELM_GLOBAL_SEL_CANCEL
                     | siglus::elm::global::ELM_GLOBAL_SELMSG
                     | siglus::elm::global::ELM_GLOBAL_SELMSG_CANCEL
-                    | siglus::elm::global::ELM_GLOBAL_SELBTN_START
-                    | ELM_GLOBAL_SELBTN
-                    | ELM_GLOBAL_SELBTN_CANCEL
             ) && ret_form == siglus::elm::form::INT
             {
-                let is_button_select = matches!(
-                    elm,
-                    siglus::elm::global::ELM_GLOBAL_SELBTN_START
-                        | ELM_GLOBAL_SELBTN
-                        | ELM_GLOBAL_SELBTN_CANCEL
-                );
-                let options = siglus::vm::extract_selection_options(args);
-                if is_button_select && options.is_empty() {
-                    // Align with Siglus button-selection polling behavior:
-                    // when no concrete choice is made yet, return -1 instead
-                    // of auto-selecting the first entry.
-                    return siglus::vm::HostReturn {
-                        int: -1,
-                        ..siglus::vm::HostReturn::default()
-                    };
-                }
-                let _ = self.event_tx.send(HostEvent::Selection(options));
-                let selected = self.selection_rx.recv().unwrap_or(0);
+                let req = SelectionRequest {
+                    options: siglus::vm::extract_selection_options(args)
+                        .into_iter()
+                        .map(|text| SelectionOption {
+                            text,
+                            item_type: 1,
+                            color: -1,
+                        })
+                        .collect(),
+                    selbtn: None,
+                };
+                let selected = self.run_selection_wait(req);
                 return siglus::vm::HostReturn {
                     int: selected,
                     ..siglus::vm::HostReturn::default()
@@ -211,52 +459,8 @@ impl siglus::vm::Host for GuiHost {
             self.apply_object_assign(plane, object_index, prop, rhs);
         }
     }
-    fn on_trace(&mut self, _msg: &str) {
-        // Optional default aggregation-template hint for vm.excall.counter traces.
-        // Enable with SIGLUS_EXCALL_COUNTER_TRACE_HINT=1 when consuming
-        // `vm.excall.counter slot=<...> phase=<...> value=<...> active=<...>` lines.
-        static TRACE_HINT_ONCE: std::sync::atomic::AtomicBool =
-            std::sync::atomic::AtomicBool::new(false);
-        let show_hint = std::env::var("SIGLUS_EXCALL_COUNTER_TRACE_HINT")
-            .map(|v| v != "0")
-            .unwrap_or(false);
-        if show_hint && !TRACE_HINT_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            debug!(
-                "{}",
-                siglus::vm::format_excall_counter_aggregate_hint("5s")
-            );
-        }
-    }
+    include!("host_impl_trace.rs");
 
-    fn on_int_event_wait_status_with_proc(
-        &mut self,
-        owner_id: i32,
-        key_skip: bool,
-        status: i32,
-        proc_depth: i32,
-        proc_top: i32,
-    ) {
-        // Default reusable consumer template for syscom wait-owner observation.
-        // Set SIGLUS_WAIT_TRACE=0 to silence default trace output.
-        let trace_on = std::env::var("SIGLUS_WAIT_TRACE")
-            .map(|v| v != "0")
-            .unwrap_or(true);
-        if !trace_on {
-            return;
-        }
-        let phase = siglus::vm::classify_syscom_wait_owner(owner_id);
-        if phase == siglus::vm::VmSyscomWaitPhase::NonSyscom {
-            return;
-        }
-        let line = siglus::vm::format_syscom_wait_trace(
-            owner_id,
-            key_skip,
-            status,
-            proc_depth,
-            proc_top,
-        );
-        debug!("{}", line);
-    }
     fn on_error(&mut self, msg: &str) {
         error!("VM Error: {}", msg);
         let _ = self.event_tx.send(HostEvent::VmError {
@@ -363,6 +567,7 @@ impl siglus::vm::Host for GuiHost {
     fn on_int_event_list_resize(&mut self, owner_id: i32, size: i32) {
         self.int_event_list_sizes.insert(owner_id, size.max(0));
     }
+    include!("host_impl_int_event.rs");
     impl_host_input_methods!();
     fn on_msg_back_state(&mut self, open: bool) {
         let _ = self.event_tx.send(HostEvent::MsgBackState(open));
@@ -637,7 +842,6 @@ impl siglus::vm::Host for GuiHost {
     impl_host_stage_object_methods!();
     impl_host_syscom_capture_methods!();
 
-    include!("host_impl_int_event.rs");
 }
 
 fn parse_wipe_type_from_cpp(elm: i32, args: &[siglus::vm::Prop]) -> i32 {

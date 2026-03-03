@@ -1,5 +1,3 @@
-use super::*;
-
 impl Vm {
     fn resolve_assign_intlist_rhs(&self, rhs: &Prop) -> Result<Vec<i32>> {
         match &rhs.value {

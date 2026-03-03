@@ -12,12 +12,57 @@ struct VmErrorContext {
     element: Vec<i32>,
 }
 
+#[derive(Debug, Clone)]
+struct SelBtnNamedArgs {
+    capture_flag: bool,
+    sel_start_call_scn: String,
+    sel_start_call_z_no: i32,
+    sync_type: i32,
+    cancel_enable: bool,
+    read_flag_scene: String,
+    read_flag_line_no: i32,
+}
+
+impl Default for SelBtnNamedArgs {
+    fn default() -> Self {
+        Self {
+            capture_flag: false,
+            sel_start_call_scn: String::new(),
+            sel_start_call_z_no: -1,
+            sync_type: 0,
+            cancel_enable: false,
+            read_flag_scene: String::new(),
+            read_flag_line_no: -1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SelectionOption {
+    text: String,
+    item_type: i32,
+    color: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SelectionRequest {
+    options: Vec<SelectionOption>,
+    selbtn: Option<SelBtnNamedArgs>,
+}
+
 enum HostEvent {
     Name(String),
     Text {
         text: String,
     },
-    Selection(Vec<String>),
+    Selection(SelectionRequest),
+    SelBtnSyncCheckpoint {
+        sync_type: i32,
+        cancel_enable: bool,
+        phase: &'static str,
+        option_count: usize,
+        selected: Option<i32>,
+    },
     VmError {
         level: VmErrorLevel,
         message: String,

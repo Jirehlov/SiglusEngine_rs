@@ -343,7 +343,7 @@ macro_rules! impl_app_render_overlay {
                         .cmp(&b.3.scene)
                         .then(a.3.line_no.cmp(&b.3.line_no))
                         .then(a.3.pc.cmp(&b.3.pc))
-                        .then(a.2.cmp(b.2))
+                        .then(a.2.cmp(&b.2))
                 }),
             }
 

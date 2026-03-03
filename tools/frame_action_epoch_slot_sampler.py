@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Frame-action / excall epoch-slot regression sampler.
 
-Consumes VM trace logs and performs lightweight A~E scenario checks documented in
+Consumes VM trace logs and performs lightweight A~F scenario checks documented in
 `docs/frame_action_epoch_slot_regression_template.md`.
 """
 
@@ -83,8 +83,21 @@ def check_case_e(lines: List[str]) -> CheckResult:
     return CheckResult("E", ok, f"fatal/mismatch lines={len(hits)}")
 
 
+def check_case_f(lines: List[str]) -> CheckResult:
+    stage_lines = [line for line in lines if "stage=" in line and "slot=" in line]
+    has_multi_stage = len({int(m.group("stage")) for line in stage_lines if (m := STAGE_RE.search(line))}) >= 2
+    has_resize = any("resize" in line and "frame_action_ch" in line for line in lines)
+    has_wait_observe = any("counter_observe wait" in line for line in lines)
+    ok = has_multi_stage and has_resize and has_wait_observe
+    return CheckResult(
+        "F",
+        ok,
+        f"multi_stage={int(has_multi_stage)} resize={int(has_resize)} wait_observe={int(has_wait_observe)}",
+    )
+
+
 def run_all(lines: List[str]) -> Dict[str, CheckResult]:
-    checks = [check_case_a, check_case_b, check_case_c, check_case_d, check_case_e]
+    checks = [check_case_a, check_case_b, check_case_c, check_case_d, check_case_e, check_case_f]
     results = {r.case_id: r for r in (check(lines) for check in checks)}
     return results
 
@@ -116,7 +129,7 @@ def main() -> int:
             )
         )
     else:
-        for cid in ["A", "B", "C", "D", "E"]:
+        for cid in ["A", "B", "C", "D", "E", "F"]:
             r = results[cid]
             mark = "PASS" if r.ok else "FAIL"
             print(f"[{mark}] case {cid}: {r.details}")

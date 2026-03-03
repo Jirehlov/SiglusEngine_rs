@@ -676,9 +676,326 @@ pub trait Host {
         None
     }
 
-    include!("api_int_event_hooks.rs");
+    // int_event Host callbacks (cmd_others.cpp alignment)
 
-    include!("api_object_hooks.rs");
+    /// C++ cmd_others.cpp: int_event SET/SET_REAL.
+    fn on_int_event_set(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _realtime: i32,
+        _value_override: Option<i32>,
+    ) {
+    }
+
+    /// C++ cmd_others.cpp: int_event LOOP/LOOP_REAL.
+    fn on_int_event_loop(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _speed_type: i32,
+        _realtime: i32,
+    ) {
+    }
+
+    /// C++ cmd_others.cpp: int_event TURN/TURN_REAL.
+    fn on_int_event_turn(
+        &mut self,
+        _owner_id: i32,
+        _start: i32,
+        _end: i32,
+        _time: i32,
+        _delay: i32,
+        _speed_type: i32,
+        _realtime: i32,
+    ) {
+    }
+
+    /// C++ cmd_others.cpp: int_event END.
+    fn on_int_event_end(&mut self, _owner_id: i32) {}
+
+    /// C++ cmd_others.cpp: int_event WAIT/WAIT_KEY.
+    fn on_int_event_wait(&mut self, _owner_id: i32, _key_skip: bool) {}
+
+    /// VM unified wait status callback for proc-level consumers.
+    ///
+    /// Status is one of `crate::vm::EVE_WAIT_*` constants.
+    fn on_int_event_wait_status(&mut self, _owner_id: i32, _key_skip: bool, _status: i32) {}
+
+    /// VM wait status callback including proc-stack observation tuple.
+    ///
+    /// Host usage hint: syscom flow points use shared owner-id constants:
+    /// `SYSCOM_WAIT_OWNER_PROC_*` (phase-specific) and
+    /// `SYSCOM_WAIT_OWNER_END_LOAD_{PRE_QUEUE,POST_QUEUE}`.
+    ///
+    /// Recommended default consumer template (flow_proc.cpp alignment):
+    /// - phase bucket:
+    ///   - `return_to_menu` => `SYSCOM_WAIT_OWNER_PROC_RETURN_TO_MENU`
+    ///   - `return_to_sel`  => `SYSCOM_WAIT_OWNER_PROC_RETURN_TO_SEL`
+    ///   - `end_game`       => `SYSCOM_WAIT_OWNER_PROC_END_GAME`
+    ///   - `end_load_pre`   => `SYSCOM_WAIT_OWNER_END_LOAD_PRE_QUEUE`
+    ///   - `end_load_post`  => `SYSCOM_WAIT_OWNER_END_LOAD_POST_QUEUE`
+    /// - fallback: unknown proc owner ids can be grouped as `proc_other`.
+    ///
+    /// Recommended stats fields:
+    /// - `owner_id`, `proc_depth`, `proc_top`, `status`, `key_skip`.
+    ///
+    /// Minimal log format example:
+    /// `vm.wait owner={owner_id} phase={phase} status={status} key_skip={key_skip} depth={proc_depth} top={proc_top}`
+    ///
+    /// - `proc_depth`: current VM proc stack depth.
+    /// - `proc_top`: top proc type code (0=None,1=Script; aligned with runtime save encoding).
+    fn on_int_event_wait_status_with_proc(
+        &mut self,
+        _owner_id: i32,
+        _key_skip: bool,
+        _status: i32,
+        _proc_depth: i32,
+        _proc_top: i32,
+    ) {
+    }
+    /// C++ cmd_others.cpp: int_event CHECK.
+    fn on_int_event_check(&mut self, _owner_id: i32) -> bool {
+        false
+    }
+
+    /// C++ cmd_others.cpp: int_event GET_EVENT_VALUE.
+    fn on_int_event_get_value(&mut self, _owner_id: i32) -> i32 {
+        0
+    }
+
+    /// C++ cmd_others.cpp: int_event YURE / YURE_REAL.
+    fn on_int_event_yure(
+        &mut self,
+        _owner_id: i32,
+        _center: i32,
+        _swing: i32,
+        _time: i32,
+        _delay: i32,
+        _speed_type: i32,
+        _realtime: bool,
+    ) {
+    }
+
+    // Object Host callbacks (cmd_object.cpp alignment)
+
+    /// C++ cmd_object.cpp: object property set (int value).
+    fn on_object_property(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _property_id: i32,
+        _value: i32,
+        _stage_idx: Option<i32>,
+    ) {
+    }
+    /// C++ cmd_object.cpp: object_list->get_sub(index, disp_out_of_range_error).
+    ///
+    /// Return negative when the host cannot provide a concrete size yet.
+    fn on_object_list_get_size(&mut self, _list_id: i32, _stage_idx: Option<i32>) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_object.cpp: `object.child` list sizing (optional host capability).
+    ///
+    /// Return negative when host cannot provide child-list size for this object.
+    fn on_object_child_list_get_size(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        -1
+    }
+
+    /// C++ cmd_object.cpp: child object `is_use()` check under `object.child[idx]`.
+    fn on_object_child_is_use(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _stage_idx: Option<i32>,
+    ) -> bool {
+        true
+    }
+
+    /// C++ cmd_object.cpp: child object property get.
+    fn on_object_child_get(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        0
+    }
+
+    /// C++ cmd_object.cpp: child object string property get.
+    fn on_object_child_get_str(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+    ) -> String {
+        String::new()
+    }
+
+    /// C++ cmd_object.cpp: child object int-return query lane.
+    fn on_object_child_query(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        0
+    }
+
+    /// C++ cmd_object.cpp: child list resize (`object.child.resize`).
+    fn on_object_child_list_resize(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _size: i32,
+        _stage_idx: Option<i32>,
+    ) {
+    }
+
+    /// C++ cmd_object.cpp: child object property set (int setter lane).
+    fn on_object_child_property(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _sub_id: i32,
+        _value: i32,
+        _stage_idx: Option<i32>,
+    ) {
+    }
+
+    /// C++ cmd_object.cpp: child object action/lifecycle command.
+    fn on_object_child_action(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _child_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) {
+    }
+
+    /// C++ cmd_object.cpp: `if (!p_obj->is_use()) {}` early-return branch.
+    fn on_object_is_use(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _stage_idx: Option<i32>,
+    ) -> bool {
+        true
+    }
+
+    /// C++ cmd_object.cpp: object action/lifecycle command (sub_id identifies the command).
+    fn on_object_action(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) {
+    }
+
+    /// C++ cmd_object.cpp: object property get.
+    fn on_object_get(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        0
+    }
+
+    /// C++ cmd_object.cpp: string property get (`get_file_name/get_string/get_element_name`).
+    fn on_object_get_str(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+    ) -> String {
+        String::new()
+    }
+
+    /// C++ cmd_object.cpp: int-returning action lane with argument payload (e.g. `__iapp_dummy`).
+    fn on_object_query(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _args: &[Prop],
+        _stage_idx: Option<i32>,
+    ) -> i32 {
+        0
+    }
+
+    /// C++ eng_frame.cpp / elm_counter.cpp: frame_action counter elapsed source.
+    ///
+    /// Return per-object `(past_game_time, past_real_time)` when host can provide
+    /// a more precise time source; `None` falls back to global `on_frame_counter_elapsed`.
+    fn on_object_frame_action_counter_elapsed(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _stage_idx: Option<i32>,
+        _ch_index: Option<i32>,
+    ) -> Option<(i32, i32)> {
+        None
+    }
+
+    /// C++ cmd_object.cpp: frame_action/frame_action_ch composite property lane.
+    ///
+    /// For element shapes like `stage.object[idx].frame_action.<...>` and
+    /// `stage.object[idx].frame_action_ch.<...>`, the VM can delegate typed
+    /// property access to host when internal flattening does not apply.
+    fn on_object_frame_action_property(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _tail: &[i32],
+        _stage_idx: Option<i32>,
+    ) -> Option<(PropValue, i32)> {
+        None
+    }
+
+    /// C++ cmd_object.cpp: frame_action/frame_action_ch composite assign lane.
+    ///
+    /// Return `true` when host handled assignment for composite frame_action path.
+    fn on_object_frame_action_assign(
+        &mut self,
+        _list_id: i32,
+        _obj_index: i32,
+        _sub_id: i32,
+        _tail: &[i32],
+        _rhs: &Prop,
+        _stage_idx: Option<i32>,
+    ) -> bool {
+        false
+    }
 
     // Mwnd Host callbacks (cmd_mwnd.cpp alignment)
 

@@ -1,7 +1,7 @@
 use super::*;
 
 impl Vm {
-    fn maybe_emit_excall_counter_aggregate_hint(&self, host: &mut dyn Host) {
+    pub(super) fn maybe_emit_excall_counter_aggregate_hint(&self, host: &mut dyn Host) {
         if let Some(line) = crate::vm::take_excall_counter_aggregate_hint("session") {
             host.on_trace(&line);
         }
@@ -43,7 +43,7 @@ impl Vm {
         }
     }
 
-    fn counter_collect_int_args(
+    pub(super) fn counter_collect_int_args(
         method: i32,
         args: &[Prop],
         host: &mut dyn Host,
@@ -91,7 +91,7 @@ impl Vm {
         (owner_id, phase, proc_depth, proc_top)
     }
 
-    fn counter_emit_wait_observation(
+    pub(super) fn counter_emit_wait_observation(
         &self,
         counter_idx: usize,
         method: i32,

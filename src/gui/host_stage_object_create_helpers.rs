@@ -81,21 +81,6 @@ static OBJECT_MOVIE_SEEK_STATE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 impl GuiHost {
-    fn reset_object_runtime_state_for_create(&mut self, plane: StagePlane, object_index: i32) {
-        let st = self.get_or_create_object_state(plane, object_index);
-        reset_object_state_preserve_seq(st);
-        self.movie_playing_objects.remove(&(plane, object_index));
-        self.movie_generations.remove(&(plane, object_index));
-        self.movie_last_failure.remove(&(plane, object_index));
-        self.clear_object_string_state(plane, object_index);
-        self.clear_object_string_style_state(plane, object_index);
-        self.clear_object_number_state(plane, object_index);
-        self.clear_object_number_style_state(plane, object_index);
-        self.clear_object_button_state(plane, object_index);
-        self.clear_object_weather_state(plane, object_index);
-        self.clear_object_movie_seek_state(plane, object_index);
-    }
-
     fn object_string_state_map(
         &self,
     ) -> &std::sync::Mutex<std::collections::BTreeMap<(StagePlane, i32), String>> {

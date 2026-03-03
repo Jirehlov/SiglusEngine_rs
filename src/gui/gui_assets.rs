@@ -367,7 +367,7 @@ fn resolve_resource_path_like_cpp(
         ext_candidates.push(ext);
     }
     let fallback_exts: &[&str] = match kind {
-        siglus::vm::VmResourceKind::Image => IMAGE_EXT_CANDIDATES,
+        siglus::vm::VmResourceKind::Image => &IMAGE_EXT_CANDIDATES,
         siglus::vm::VmResourceKind::Movie => MOVIE_EXT_CANDIDATES,
         siglus::vm::VmResourceKind::Text => TEXT_EXT_CANDIDATES,
         siglus::vm::VmResourceKind::Generic => &[],

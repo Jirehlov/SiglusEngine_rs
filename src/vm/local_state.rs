@@ -361,7 +361,6 @@ impl Vm {
             flags_d: self.flags_d.clone(),
             flags_e: self.flags_e.clone(),
             flags_f: self.flags_f.clone(),
-            excall_flags_f: self.excall_flags_f.clone(),
             flags_x: self.flags_x.clone(),
             flags_g: self.flags_g.clone(),
             flags_z: self.flags_z.clone(),

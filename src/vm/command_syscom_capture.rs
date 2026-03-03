@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(dead_code)]
 impl Vm {
     fn capture_req_from_args(&self, args: &[Prop]) -> VmCaptureFileOp {
         let mut req = VmCaptureFileOp {
@@ -145,24 +146,22 @@ impl Vm {
         ret_form: i32,
         host: &mut dyn Host,
     ) -> Option<bool> {
-        let mut push_int_ret = |v: i32| {
-            if ret_form == crate::elm::form::INT {
-                self.stack.push_int(v);
-            }
-        };
-
         match x {
             y if y == crate::elm::syscom::ELM_SYSCOM_CREATE_CAPTURE_BUFFER => {
                 host.on_syscom_create_capture_buffer(
                     Self::arg_int(args, 0),
                     Self::arg_int(args, 1),
                 );
-                push_int_ret(0);
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Some(true)
             }
             y if y == crate::elm::syscom::ELM_SYSCOM_DESTROY_CAPTURE_BUFFER => {
                 host.on_syscom_destroy_capture_buffer();
-                push_int_ret(0);
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Some(true)
             }
             y if y == crate::elm::syscom::ELM_SYSCOM_CAPTURE_TO_CAPTURE_BUFFER => {
@@ -171,7 +170,9 @@ impl Vm {
                     Self::arg_int(args, 1),
                     "",
                 );
-                push_int_ret(0);
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Some(true)
             }
             y if y == crate::elm::syscom::ELM_SYSCOM_CAPTURE_AND_SAVE_BUFFER_TO_PNG => {
@@ -184,7 +185,9 @@ impl Vm {
                     Self::arg_int(args, 1),
                     &path,
                 );
-                push_int_ret(0);
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(0);
+                }
                 Some(true)
             }
             y if y == crate::elm::syscom::ELM_SYSCOM_SAVE_CAPTURE_BUFFER_TO_FILE => {
@@ -192,7 +195,9 @@ impl Vm {
                 req.int_values = self.collect_capture_int_values(&req.int_flags);
                 req.str_values = self.collect_capture_str_values(&req.str_flags);
                 let ok = host.on_syscom_save_capture_buffer_to_file(&req);
-                push_int_ret(if ok { 1 } else { 0 });
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(if ok { 1 } else { 0 });
+                }
                 Some(true)
             }
             y if y == crate::elm::syscom::ELM_SYSCOM_LOAD_FLAG_FROM_CAPTURE_FILE => {
@@ -208,7 +213,9 @@ impl Vm {
                         "ファイル \"{}\" が見つかりません。(syscom.load_flag_from_capture_file)",
                         req.file_name
                     ));
-                    push_int_ret(0);
+                    if ret_form == crate::elm::form::INT {
+                        self.stack.push_int(0);
+                    }
                     return Some(true);
                 }
                 let payload = host.on_syscom_load_flag_from_capture_file(&req);
@@ -218,7 +225,9 @@ impl Vm {
                 } else {
                     false
                 };
-                push_int_ret(if ok { 1 } else { 0 });
+                if ret_form == crate::elm::form::INT {
+                    self.stack.push_int(if ok { 1 } else { 0 });
+                }
                 Some(true)
             }
             _ => None,

@@ -56,3 +56,5 @@ pub mod world;
 pub mod worldlist;
 
 pub const ELM_ARRAY: i32 = -1;
+
+pub const ELM_UP: i32 = -2;

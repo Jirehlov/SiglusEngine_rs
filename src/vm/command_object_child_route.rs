@@ -1,13 +1,19 @@
 impl Vm {
+    const ERR_OBJECT_CHILD_INVALID: &'static str = "無効なコマンドが指定されました。(object_list child)";
+    const ERR_OBJECT_CHILD_OOR: &'static str = "範囲外のオブジェクト番号が指定されました。(object_list child)";
+
+    fn object_child_emit_invalid(host: &mut dyn Host) {
+        host.on_error_fatal(Self::ERR_OBJECT_CHILD_INVALID);
+    }
+
     fn child_getter_lane_mismatch(
         host: &mut dyn Host,
         ret_form: i32,
-        message: &str,
         stack: &mut IfcStack,
     ) {
-        // cmd_object.cpp getter lane alignment:
-        // VOID lane still reports misuse explicitly, while INT/STR lanes also push typed defaults.
-        host.on_error_fatal(message);
+        // C++ cmd_object.cpp::tnm_command_proc_object_list keeps this lane in
+        // `無効なコマンド... + get_element_name()`; Rust normalizes to child suffix.
+        Self::object_child_emit_invalid(host);
         if ret_form != crate::elm::form::VOID {
             Self::object_frame_action_push_default(stack, ret_form);
         }
@@ -44,7 +50,7 @@ impl Vm {
             return true;
         }
         if element[0] == crate::elm::ELM_UP {
-            host.on_error_fatal("CD_COMMAND stage.object.child: ELM_UP is not supported");
+            Self::object_child_emit_invalid(host);
             return true;
         }
 
@@ -68,11 +74,11 @@ impl Vm {
         }
 
         if element[0] != crate::elm::ELM_ARRAY {
-            host.on_error_fatal("無効なコマンドが指定されました。(object_list child)");
+            Self::object_child_emit_invalid(host);
             return true;
         }
         if element.len() < 2 {
-            host.on_error_fatal("CD_COMMAND stage.object.child: missing array index");
+            Self::object_child_emit_invalid(host);
             return true;
         }
 
@@ -80,9 +86,7 @@ impl Vm {
         let size = host.on_object_child_list_get_size(list_id, obj_idx, stage_idx);
         if size >= 0 && (child_idx < 0 || child_idx >= size) {
             if self.options.disp_out_of_range_error {
-                host.on_error_fatal(
-                    "範囲外のオブジェクト番号が指定されました。(object_list child)",
-                );
+                host.on_error_fatal(Self::ERR_OBJECT_CHILD_OOR);
             }
             Self::object_frame_action_push_default(&mut self.stack, ret_form);
             return true;
@@ -101,7 +105,7 @@ impl Vm {
 
         let sub = element[2];
         if element.len() > 3 {
-            host.on_error_fatal("CD_COMMAND stage.object.child[idx]: unexpected nested tail");
+            Self::object_child_emit_invalid(host);
             Self::object_frame_action_push_default(&mut self.stack, ret_form);
             return true;
         }
@@ -111,15 +115,12 @@ impl Vm {
                 Self::child_getter_lane_mismatch(
                     host,
                     ret_form,
-                    "CD_COMMAND stage.object.child[idx]: invalid arg_list_id for getter lane",
                     &mut self.stack,
                 );
                 return true;
             }
             if Self::object_property_is_settable_int(sub) {
-                host.on_error_fatal(
-                    "CD_COMMAND stage.object.child[idx]: invalid arg_list_id for setter lane",
-                );
+                Self::object_child_emit_invalid(host);
                 return true;
             }
         }
@@ -130,7 +131,6 @@ impl Vm {
                     Self::child_getter_lane_mismatch(
                         host,
                         ret_form,
-                        "CD_COMMAND stage.object.child[idx]: string getter requires STR ret_form",
                         &mut self.stack,
                     );
                     return true;
@@ -145,15 +145,12 @@ impl Vm {
                     Self::child_getter_lane_mismatch(
                         host,
                         ret_form,
-                        "CD_COMMAND stage.object.child[idx]: int getter requires INT ret_form",
                         &mut self.stack,
                     );
                     return true;
                 }
                 if Self::object_child_property_requires_runtime_args(sub) && args.is_empty() {
-                    host.on_error_fatal(
-                        "CD_COMMAND stage.object.child[idx]: property requires runtime args",
-                    );
+                    Self::object_child_emit_invalid(host);
                     self.stack.push_int(0);
                 } else {
                     let v = if args.is_empty() {
@@ -169,7 +166,6 @@ impl Vm {
             Self::child_getter_lane_mismatch(
                 host,
                 ret_form,
-                "CD_COMMAND stage.object.child[idx]: command-only route",
                 &mut self.stack,
             );
             return true;
@@ -178,9 +174,7 @@ impl Vm {
         if arg_list_id == 1 {
             if Self::object_property_is_settable_int(sub) {
                 if args.is_empty() {
-                    host.on_error_fatal(
-                        "CD_COMMAND stage.object.child[idx]: setter lane missing rhs arg",
-                    );
+                    Self::object_child_emit_invalid(host);
                     return true;
                 }
                 host.on_object_child_property(
@@ -194,9 +188,7 @@ impl Vm {
                 return true;
             }
             if Self::object_query_is_int(sub) || Self::object_query_is_str(sub) {
-                host.on_error_fatal(
-                    "CD_COMMAND stage.object.child[idx]: read-only getter in setter lane",
-                );
+                Self::object_child_emit_invalid(host);
                 return true;
             }
         }

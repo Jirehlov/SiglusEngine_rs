@@ -32,6 +32,7 @@ impl GuiApp {
             hide_message_window: false,
             message_window_visible: false,
             pending_options: Vec::new(),
+            pending_selbtn: None,
             backlog: Vec::new(),
             done: false,
             show_backlog: false,
@@ -179,12 +180,25 @@ impl GuiApp {
                         }
                     }
                 }
-                HostEvent::Selection(options) => {
-                    if options.is_empty() {
+                HostEvent::Selection(req) => {
+                    if req.options.is_empty() {
                         let _ = self.selection_tx.send(0);
                     } else {
-                        self.pending_options = options;
+                        self.pending_selbtn = req.selbtn.clone();
+                        self.pending_options = req.options;
                     }
+                }
+                HostEvent::SelBtnSyncCheckpoint {
+                    sync_type,
+                    cancel_enable,
+                    phase,
+                    option_count,
+                    selected,
+                } => {
+                    debug!(
+                        "selbtn checkpoint: sync_type={} cancel_enable={} phase={} options={} selected={:?}",
+                        sync_type, cancel_enable, phase, option_count, selected
+                    );
                 }
                 HostEvent::VmError {
                     level,
@@ -572,6 +586,20 @@ impl GuiApp {
 
         if self.show_backlog && (secondary_clicked || space_pressed || escape_pressed) {
             self.show_backlog = false;
+            return;
+        }
+
+        if !self.pending_options.is_empty() {
+            let cancel_enable = self
+                .pending_selbtn
+                .as_ref()
+                .map(|s| s.cancel_enable)
+                .unwrap_or(false);
+            if cancel_enable && (secondary_clicked || escape_pressed) {
+                let _ = self.selection_tx.send(-1);
+                self.pending_options.clear();
+                self.pending_selbtn = None;
+            }
             return;
         }
 

@@ -9,7 +9,8 @@ impl GuiHost {
                 } => {
                     if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
                         self.movie_playing_objects.insert((stage, index));
-                        self.movie_last_failure.remove(&(stage, index));
+                        self.movie_ready_objects.insert((stage, index));
+                        self.clear_movie_terminal_state(stage, index);
                     }
                 }
                 MoviePlaybackEvent::ObjectFinished {
@@ -19,7 +20,8 @@ impl GuiHost {
                 } => {
                     if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
                         self.movie_playing_objects.remove(&(stage, index));
-                        self.movie_last_failure.remove(&(stage, index));
+                        self.movie_ready_objects.remove(&(stage, index));
+                        self.clear_movie_terminal_state(stage, index);
                     }
                 }
                 MoviePlaybackEvent::ObjectFailed {
@@ -30,7 +32,9 @@ impl GuiHost {
                 } => {
                     if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
                         self.movie_playing_objects.remove(&(stage, index));
+                        self.movie_ready_objects.remove(&(stage, index));
                         self.movie_last_failure.insert((stage, index), info.clone());
+                        self.movie_interrupted_objects.remove(&(stage, index));
                         log::warn!(
                             "movie failed stage={:?} index={} generation={} category={:?} backend={:?} unrecoverable={} detail={} counters=({}, {}, {})",
                             stage,
@@ -53,6 +57,8 @@ impl GuiHost {
                 } => {
                     if self.movie_generations.get(&(stage, index)).copied() == Some(generation) {
                         self.movie_playing_objects.remove(&(stage, index));
+                        self.movie_ready_objects.remove(&(stage, index));
+                        self.movie_interrupted_objects.insert((stage, index));
                     }
                 }
             }
@@ -92,6 +98,96 @@ impl GuiHost {
         self.drain_movie_playback_events();
     }
 
+
+    fn clear_movie_terminal_state(&mut self, plane: StagePlane, object_index: i32) {
+        self.movie_last_failure.remove(&(plane, object_index));
+        self.movie_interrupted_objects.remove(&(plane, object_index));
+    }
+
+
+    fn object_positional_int_args(args: &[siglus::vm::Prop]) -> Vec<i32> {
+        args.iter()
+            .filter(|p| p.id < 0)
+            .map(|p| p.as_int().unwrap_or(0))
+            .collect()
+    }
+
+    fn object_named_int_arg(args: &[siglus::vm::Prop], id: i32) -> Option<i32> {
+        args.iter()
+            .rev()
+            .find(|p| p.id == id)
+            .and_then(|p| p.as_int())
+    }
+
+    fn object_tail_value(args: &[siglus::vm::Prop], positional_idx: usize, named_id: i32, default: i32) -> i32 {
+        let positional = Self::object_positional_int_args(args);
+        let v = positional.get(positional_idx).copied().unwrap_or(default);
+        Self::object_named_int_arg(args, named_id).unwrap_or(v)
+    }
+
+    fn object_movie_option_flags(args: &[siglus::vm::Prop]) -> (bool, bool, bool) {
+        let auto_init = Self::object_named_int_arg(args, 0).unwrap_or(1) != 0;
+        let real_time = Self::object_named_int_arg(args, 1).unwrap_or(1) != 0;
+        let ready_only = Self::object_named_int_arg(args, 2).unwrap_or(0) != 0;
+        (auto_init, real_time, ready_only)
+    }
+
+
+
+    pub(super) fn object_movie_wait_state(&self, plane: StagePlane, object_index: i32) -> MovieWaitState {
+        let playing = self.movie_playing_objects.contains(&(plane, object_index));
+        let ready_only = self
+            .objects
+            .get(&(plane, object_index))
+            .map(|st| st.movie_ready_only)
+            .unwrap_or(false);
+        if playing {
+            if !ready_only {
+                return MovieWaitState::Pending;
+            }
+            if self.movie_ready_objects.contains(&(plane, object_index)) {
+                return MovieWaitState::Ready;
+            }
+            return MovieWaitState::Pending;
+        }
+        if self.movie_last_failure.contains_key(&(plane, object_index)) {
+            return MovieWaitState::Failed;
+        }
+        if self.movie_interrupted_objects.contains(&(plane, object_index)) {
+            return MovieWaitState::Interrupted;
+        }
+        if self.movie_generations.contains_key(&(plane, object_index)) {
+            // Pre-start gate: play command already dispatched but backend has not reported started/finished yet.
+            return MovieWaitState::Pending;
+        }
+        MovieWaitState::Ready
+    }
+
+    fn object_check_movie_failed_code(&self, plane: StagePlane, object_index: i32) -> i32 {
+        let Some(info) = self.movie_last_failure.get(&(plane, object_index)) else {
+            return -1;
+        };
+        // Align with iapp selector category domain (1..5): map to -11..-15.
+        -(10 + info.category_code())
+    }
+
+    fn is_object_movie_wait_ready(&self, plane: StagePlane, object_index: i32) -> bool {
+        !matches!(
+            self.object_movie_wait_state(plane, object_index),
+            MovieWaitState::Pending
+        )
+    }
+
+    fn consume_movie_wait_key_skip_stock(&self) -> bool {
+        if let Ok(mut state) = self.input_state.lock() {
+            if state.has_key_wait_press_stock() {
+                let _ = state.consume_key_wait_press_stock();
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn apply_object_command(
         &mut self,
         plane: StagePlane,
@@ -123,7 +219,16 @@ impl GuiHost {
                     let state = self.get_or_create_object_state(plane, object_index);
                     state.file_name = file_name.to_owned();
                     self.clear_object_string_state(plane, object_index);
-                    self.apply_create_tail_disp_xy_pat(plane, object_index, 1, 2, 3, Some(4), args);
+                    let disp = Self::object_tail_value(args, 1, 0, 1) != 0;
+                    let pos_x = Self::object_tail_value(args, 2, 1, 0) as f32;
+                    let pos_y = Self::object_tail_value(args, 3, 2, 0) as f32;
+                    let pat_no = Self::object_tail_value(args, 4, 3, 0).max(0) as usize;
+                    let state = self.get_or_create_object_state(plane, object_index);
+                    state.visible = disp;
+                    state.x = pos_x;
+                    state.y = pos_y;
+                    state.pat_no = pat_no;
+                    self.emit_object_sort_and_visibility(plane, object_index);
                     self.emit_object_image(plane, object_index);
                 }
             }
@@ -176,10 +281,47 @@ impl GuiHost {
                     if file_name.is_empty() {
                         return;
                     }
+                    let rep_x = Self::object_named_int_arg(args, 0).unwrap_or(0);
+                    let rep_y = Self::object_named_int_arg(args, 1).unwrap_or(0);
+                    log::debug!("create_emote rep_pos=({}, {}) stage={:?} index={}", rep_x, rep_y, plane, object_index);
                     let state = self.get_or_create_object_state(plane, object_index);
                     state.file_name = file_name.to_owned();
+                    state.emote_rep_x = rep_x;
+                    state.emote_rep_y = rep_y;
                     self.clear_object_string_state(plane, object_index);
                     self.apply_create_tail_disp_xy_pat(plane, object_index, 3, 4, 5, None, args);
+                    self.emit_object_image(plane, object_index);
+                }
+            }
+            x if x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_LOOP
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT
+                || x == siglus::elm::objectlist::ELM_OBJECT_CREATE_MOVIE_WAIT_KEY =>
+            {
+                self.reset_object_runtime_state_for_create(plane, object_index);
+                if let Some(file_name) = arg_str(0) {
+                    if file_name.is_empty() {
+                        return;
+                    }
+                    let (auto_init, real_time, ready_only) = Self::object_movie_option_flags(args);
+                    log::debug!("create_movie opts auto_init={} real_time={} ready_only={} stage={:?} index={}", auto_init, real_time, ready_only, plane, object_index);
+                    if std::env::var("SIGLUS_MOVIE_WAIT_TRACE").map(|v| v != "0").unwrap_or(false) {
+                        log::debug!(
+                            "vm.failed_code_trace create stage={:?} index={} auto_init={} real_time={} ready_only={}",
+                            plane,
+                            object_index,
+                            auto_init,
+                            real_time,
+                            ready_only
+                        );
+                    }
+                    let state = self.get_or_create_object_state(plane, object_index);
+                    state.file_name = file_name.to_owned();
+                    state.movie_auto_init = auto_init;
+                    state.movie_real_time = real_time;
+                    state.movie_ready_only = ready_only;
+                    self.clear_object_string_state(plane, object_index);
+                    self.apply_create_tail_disp_xy_pat(plane, object_index, 1, 2, 3, None, args);
                     self.emit_object_image(plane, object_index);
                 }
             }

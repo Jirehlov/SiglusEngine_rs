@@ -16,6 +16,7 @@ include!("command_object_frame_action_route.rs");
 include!("command_object_frame_action_counter_gc.rs");
 include!("command_object_child_route.rs");
 include!("command_object_gan_track.rs");
+include!("command_object_error_family.rs");
 
 impl Vm {
     fn object_arg_str(args: &[Prop], idx: usize) -> String {
@@ -192,9 +193,7 @@ impl Vm {
         }
 
         match sub {
-            // =============================================================
             // Simple int property get/set (al_id=0 → push, al_id=1 → set)
-            // =============================================================
             ELM_OBJECT_WIPE_COPY
             | ELM_OBJECT_WIPE_ERASE
             | ELM_OBJECT_CLICK_DISABLE
@@ -263,9 +262,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // Compound set commands (2-3 positional args)
-            // =============================================================
             ELM_OBJECT_SET_POS => {
                 // C++ al_id 0: set_pos_x, set_pos_y; al_id 1: +set_pos_z
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
@@ -297,9 +294,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // Int list / rep properties (host manages int_list data)
-            // =============================================================
             ELM_OBJECT_X_REP | ELM_OBJECT_Y_REP | ELM_OBJECT_Z_REP | ELM_OBJECT_TR_REP => {
                 // C++ tnm_command_proc_int_list — accept, host handles
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
@@ -311,9 +306,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // Event properties → int_event sub-router
-            // =============================================================
             ELM_OBJECT_PATNO_EVE
             | ELM_OBJECT_X_EVE
             | ELM_OBJECT_Y_EVE
@@ -366,9 +359,7 @@ impl Vm {
                 sub,
             ),
 
-            // =============================================================
             // ALL_EVE: end/wait/check
-            // =============================================================
             ELM_OBJECT_ALL_EVE => {
                 if element.len() >= 2 {
                     use crate::elm::allevent::*;
@@ -392,9 +383,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // Query commands (push values)
-            // =============================================================
             ELM_OBJECT_GET_PAT_CNT => {
                 // C++ tnm_stack_push_int(p_obj->get_pat_cnt())
                 self.stack
@@ -437,9 +426,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // Lifecycle commands
-            // =============================================================
             ELM_OBJECT_INIT | ELM_OBJECT_FREE | ELM_OBJECT_INIT_PARAM => {
                 if Self::object_command_replaces_resource(sub) {
                     self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
@@ -459,7 +446,6 @@ impl Vm {
             | ELM_OBJECT_CREATE_CAPTURE_THUMB
             | ELM_OBJECT_CREATE_CAPTURE
             | ELM_OBJECT_CREATE_COPY_FROM
-            | ELM_OBJECT_CREATE_EMOTE
             | ELM_OBJECT_CREATE_FROM_CAPTURE_FILE => {
                 if Self::object_command_replaces_resource(sub) {
                     self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
@@ -473,6 +459,27 @@ impl Vm {
             | ELM_OBJECT_CREATE_MOVIE_LOOP
             | ELM_OBJECT_CREATE_MOVIE_WAIT
             | ELM_OBJECT_CREATE_MOVIE_WAIT_KEY => {
+                let ok = Self::object_validate_arg_range(sub, args, 1, 4, host)
+                    && Self::object_validate_named_arg_ids(sub, args, &[0, 1, 2], host);
+                if !ok {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
+                if Self::object_command_replaces_resource(sub) {
+                    self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
+                    self.object_gan_track_clear(list_id, obj_idx, stage_idx);
+                }
+                Self::object_report_file_not_found(host, sub, args);
+                host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
+                true
+            }
+            ELM_OBJECT_CREATE_EMOTE => {
+                let ok = Self::object_validate_arg_range(sub, args, 3, 6, host)
+                    && Self::object_validate_named_arg_ids(sub, args, &[0, 1], host);
+                if !ok {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 if Self::object_command_replaces_resource(sub) {
                     self.frame_counter_invalidate_object_context(list_id, obj_idx, stage_idx);
                     self.object_gan_track_clear(list_id, obj_idx, stage_idx);
@@ -491,9 +498,7 @@ impl Vm {
                 true
             }
 
-            // =============================================================
             // String / Number object commands
-            // =============================================================
             ELM_OBJECT_SET_STRING
             | ELM_OBJECT_SET_STRING_PARAM
             | ELM_OBJECT_SET_NUMBER
@@ -516,9 +521,6 @@ impl Vm {
                 true
             }
 
-            // =============================================================
-            // Movie commands
-            // =============================================================
             ELM_OBJECT_PAUSE_MOVIE
             | ELM_OBJECT_RESUME_MOVIE
             | ELM_OBJECT_SEEK_MOVIE
@@ -526,6 +528,16 @@ impl Vm {
             | ELM_OBJECT_WAIT_MOVIE_KEY
             | ELM_OBJECT_END_MOVIE_LOOP
             | ELM_OBJECT_SET_MOVIE_AUTO_FREE => {
+                let ok = match sub {
+                    ELM_OBJECT_SEEK_MOVIE | ELM_OBJECT_SET_MOVIE_AUTO_FREE => {
+                        Self::object_validate_arg_range(sub, args, 1, 1, host)
+                    }
+                    _ => Self::object_validate_arg_range(sub, args, 0, 0, host),
+                };
+                if !ok {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -540,17 +552,16 @@ impl Vm {
                 true
             }
 
-            // =============================================================
-            // Weather param commands
-            // =============================================================
             ELM_OBJECT_SET_WEATHER_PARAM_TYPE_A | ELM_OBJECT_SET_WEATHER_PARAM_TYPE_B => {
+                if !args.is_empty() {
+                    host.on_error_fatal(Self::object_invalid_message_for_sub(sub));
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
 
-            // =============================================================
-            // Button commands
-            // =============================================================
             ELM_OBJECT_CLEAR_BUTTON
             | ELM_OBJECT_SET_BUTTON
             | ELM_OBJECT_SET_BUTTON_GROUP
@@ -561,6 +572,20 @@ impl Vm {
             | ELM_OBJECT_SET_BUTTON_STATE_DISABLE
             | ELM_OBJECT_SET_BUTTON_CALL
             | ELM_OBJECT_CLEAR_BUTTON_CALL => {
+                let ok = match sub {
+                    ELM_OBJECT_SET_BUTTON => Self::object_validate_arg_range(sub, args, 3, 4, host),
+                    ELM_OBJECT_SET_BUTTON_GROUP
+                    | ELM_OBJECT_SET_BUTTON_PUSHKEEP
+                    | ELM_OBJECT_SET_BUTTON_ALPHA_TEST
+                    | ELM_OBJECT_SET_BUTTON_CALL => {
+                        Self::object_validate_arg_range(sub, args, 1, 1, host)
+                    }
+                    _ => Self::object_validate_arg_range(sub, args, 0, 0, host),
+                };
+                if !ok {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -582,21 +607,30 @@ impl Vm {
             // overlap with ELM_OBJECT_DISP/PATNO — in C++ they are sub-dispatched
             // from within FRAME_ACTION, not from the main object switch.
             // Frame action commands
-            // =============================================================
             ELM_OBJECT_FRAME_ACTION | ELM_OBJECT_FRAME_ACTION_CH => self
                 .try_command_object_frame_action(
                     list_id, obj_idx, sub, element, args, ret_form, stage_idx, host,
                 ),
 
-            // =============================================================
-            // Emote commands
-            // =============================================================
             ELM_OBJECT_EMOTE_PLAY_TIMELINE
             | ELM_OBJECT_EMOTE_STOP_TIMELINE
             | ELM_OBJECT_EMOTE_WAIT_PLAYING
             | ELM_OBJECT_EMOTE_WAIT_PLAYING_KEY
             | ELM_OBJECT_EMOTE_SKIP
             | ELM_OBJECT_EMOTE_PASS => {
+                let ok = match sub {
+                    ELM_OBJECT_EMOTE_PLAY_TIMELINE => {
+                        Self::object_validate_arg_range(sub, args, 2, 3, host)
+                    }
+                    ELM_OBJECT_EMOTE_STOP_TIMELINE => {
+                        Self::object_validate_arg_range(sub, args, 0, 1, host)
+                    }
+                    _ => Self::object_validate_arg_range(sub, args, 0, 0, host),
+                };
+                if !ok {
+                    Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                    return true;
+                }
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
@@ -607,10 +641,17 @@ impl Vm {
             }
             ELM_OBJECT_EMOTE_KOE_CHARA_NO | ELM_OBJECT_EMOTE_MOUTH_VOLUME => {
                 if arg_list_id == 0 {
+                    if !Self::object_validate_arg_range(sub, args, 0, 0, host) {
+                        Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                        return true;
+                    }
                     self.stack
                         .push_int(host.on_object_get(list_id, obj_idx, sub, stage_idx));
-                // get
                 } else {
+                    if !Self::object_validate_arg_range(sub, args, 1, 1, host) {
+                        Self::object_frame_action_push_default(&mut self.stack, ret_form);
+                        return true;
+                    }
                     host.on_object_property(
                         list_id,
                         obj_idx,
@@ -622,17 +663,11 @@ impl Vm {
                 true
             }
 
-            // =============================================================
-            // Hints
-            // =============================================================
             ELM_OBJECT_ADD_HINTS | ELM_OBJECT_CLEAR_HINTS => {
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
 
-            // =============================================================
-            // Child object list
-            // =============================================================
             ELM_OBJECT_CHILD => self.try_command_object_child(
                 list_id,
                 stage_idx,
@@ -644,17 +679,12 @@ impl Vm {
                 host,
             ),
 
-            // =============================================================
-            // Child sort type
-            // =============================================================
             ELM_OBJECT_SET_CHILD_SORT_TYPE_DEFAULT | ELM_OBJECT_SET_CHILD_SORT_TYPE_TEST => {
                 host.on_object_action(list_id, obj_idx, sub, args, stage_idx);
                 true
             }
 
-            // =============================================================
             // iapp dummy
-            // =============================================================
             ELM_OBJECT__IAPP_DUMMY => {
                 // C++ 对照（cmd_object.cpp 分支级）：
                 // - `tnm_command_proc_object` 的 object switch 对 int 读取路径统一使用 `tnm_stack_push_int(...)`。
@@ -668,7 +698,7 @@ impl Vm {
             }
 
             _ => {
-                host.on_error_fatal("無効なコマンドが指定されました。(object)");
+                host.on_error_fatal(Self::object_invalid_message_for_sub(sub));
                 true
             }
         }

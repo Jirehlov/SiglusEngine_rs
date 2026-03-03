@@ -156,6 +156,11 @@ fn default_host_object_state() -> HostObjectState {
         dark: 0.0,
         mono: 0.0,
         reverse: false,
+        movie_auto_init: true,
+        movie_real_time: true,
+        movie_ready_only: false,
+        emote_rep_x: 0,
+        emote_rep_y: 0,
         seq: 0,
     }
 }

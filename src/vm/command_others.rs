@@ -32,7 +32,7 @@ impl Vm {
         log::debug!("{}", line);
     }
 
-    fn ensure_counter_slot(&mut self, idx: usize) {
+    pub(super) fn ensure_counter_slot(&mut self, idx: usize) {
         if self.counter_values.len() <= idx {
             self.counter_values.resize(idx + 1, 0);
             self.counter_active.resize(idx + 1, false);
@@ -164,7 +164,7 @@ impl Vm {
         }
     }
 
-    fn try_command_counter(
+    pub(super) fn try_command_counter(
         &mut self,
         counter_idx: usize,
         element: &[i32],
